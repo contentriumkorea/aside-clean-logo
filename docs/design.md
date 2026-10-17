@@ -1,0 +1,11 @@
+# Aside Clean Logo
+
+User request: distribute the approved, tightly cropped black/white Aside icon pair with a simple install action for Windows and macOS. Dark system appearance uses white; light uses black. Apply desktop and taskbar/Dock icons as supported by the platform; preserve browser binaries, user data, and sessions. Publish public source and real installable artifacts on GitHub under contentriumkorea/aside-clean-logo.
+
+Windows: standalone .NET Framework 4.8 WinForms Setup executable, embedded assets, administrator elevation once. Install a protected helper under Program Files and register an interactive, highest-privilege scheduled task for the installing Windows account. The task monitors the Windows system theme and updates shared/user desktop, Start menu, pinned shortcuts, and running Aside window icons. Back up each shortcut once and restore on uninstall. Do not modify Aside.exe or ACLs. Install and verify on this PC after user accepts UAC. Replace the earlier prototype watcher only after new installation succeeds.
+
+macOS: native Swift/AppKit installer/helper, ordinary install button, per-user launch agent, approved icon pair. Use supported icon customization APIs and preserve the Aside code signature. Detect Aside.app; clearly report permission or Dock limitations instead of claiming unsupported behavior. Build and test actual packages on GitHub macOS runners, including a disposable app fixture and signature verification. No access to user browser data or credentials.
+
+Distribution: public GitHub repository, release download buttons for the Windows Setup and macOS installer, build/QA workflow for each platform, checksums, concise English/Korean usage and uninstall instructions. Executable/package names are functional project names, without document timestamp prefixes.
+
+Acceptance: identical silhouettes and alpha in both approved PNGs; Windows light/dark mapping and actual installer/restore checks; macOS native build, icon/restore fixture and app signature checks; no secrets or machine-specific paths in published source; public release asset downloads verified against checksums. macOS hardware/browser integration beyond runner fixtures must be labeled as untested unless verified.
