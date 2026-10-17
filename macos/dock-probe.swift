@@ -241,14 +241,19 @@ final class DockProbe: NSObject, NSApplicationDelegate {
             // suppress a failed assertion or substitute for metadata correctness.
             schedule(3) {
                 self.runPhase(phase) {
-                    if icon == "black" { self.apply("white", phase: "02-white-natural") }
-                    else { self.refreshDockIfRequested() }
+                    if icon == "black" {
+                        self.refreshDockIfRequested(phase: "02-black-dock-refreshed") {
+                            self.apply("white", phase: "03-white-natural")
+                        }
+                    } else {
+                        self.refreshDockIfRequested(phase: "04-white-dock-refreshed") { self.finish() }
+                    }
                 }
             }
         } catch { fail(error) }
     }
 
-    func refreshDockIfRequested() {
+    func refreshDockIfRequested(phase: String, next: @escaping () -> Void) {
         if ProcessInfo.processInfo.environment["ASIDE_DOCK_PROBE_REFRESH"] == "1" {
             do {
                 guard ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true" else {
@@ -257,9 +262,9 @@ final class DockProbe: NSObject, NSApplicationDelegate {
                 let refresh = try command("/usr/bin/killall", ["Dock"])
                 try writeJSON(refresh, output.appendingPathComponent("dock-refresh-command.json"))
                 guard refresh.status == 0 else { throw ProbeError("Dock refresh failed") }
-                schedule(3) { self.runPhase("03-white-dock-refreshed") { self.finish() } }
+                schedule(3) { self.runPhase(phase, next: next) }
             } catch { fail(error) }
-        } else { finish() }
+        } else { next() }
     }
 
     func fail(_ error: Error) {

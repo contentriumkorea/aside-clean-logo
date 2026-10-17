@@ -7,7 +7,7 @@ if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
 fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 OUTPUT="${1:-$ROOT/dist/dock-probe}"
-DMG_URL="${ASIDE_PROBE_DMG_URL:-https://releases.aside.com/dev-updater/Aside-1.0.813.1.dmg}"
+DMG_URL="${ASIDE_PROBE_DMG_URL:-https://releases.aside.com/dev-updater/Aside-1.0.928.1.dmg}"
 mkdir -p "$OUTPUT"
 OUTPUT="$(cd "$OUTPUT" && pwd)"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/aside-dock-probe.XXXXXX")"
