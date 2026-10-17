@@ -179,7 +179,8 @@ final class DockProbe: NSObject, NSApplicationDelegate {
     var fixtureWindow: NSWindow?
     var socket: URLSessionWebSocketTask?
     var commandID = 0
-    var usesCDP: Bool { actualAside && ProcessInfo.processInfo.environment["ASIDE_PROBE_CDP_ONLY"] == "1" }
+    var usesAuthenticatedBridge: Bool { actualAside && ProcessInfo.processInfo.environment["ASIDE_PROBE_AUTH_BRIDGE"] == "1" }
+    var usesCDP: Bool { usesAuthenticatedBridge || (actualAside && ProcessInfo.processInfo.environment["ASIDE_PROBE_CDP_ONLY"] == "1") }
 
     init(target: URL, assets: URL, output: URL, actualAside: Bool) {
         self.target = target; self.assets = assets; self.output = output; self.actualAside = actualAside
@@ -204,11 +205,16 @@ final class DockProbe: NSObject, NSApplicationDelegate {
             config.activates = true
             config.createsNewApplicationInstance = true
             if actualAside {
-                guard let profile = ProcessInfo.processInfo.environment["ASIDE_PROBE_PROFILE"] else {
-                    throw ProbeError("ASIDE_PROBE_PROFILE must point outside uploaded artifacts")
+                if usesAuthenticatedBridge {
+                    // Fresh runner default profile; no debugging switches or profile copying.
+                    config.arguments = ["--no-first-run", "--no-default-browser-check", "about:blank"]
+                } else {
+                    guard let profile = ProcessInfo.processInfo.environment["ASIDE_PROBE_PROFILE"] else {
+                        throw ProbeError("ASIDE_PROBE_PROFILE must point outside uploaded artifacts")
+                    }
+                    config.arguments = ["--user-data-dir=\(profile)", "--no-first-run", "--no-default-browser-check", "about:blank"]
+                    if usesCDP { config.arguments += ["--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1"] }
                 }
-                config.arguments = ["--user-data-dir=\(profile)", "--no-first-run", "--no-default-browser-check", "about:blank"]
-                if usesCDP { config.arguments += ["--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1"] }
             } else { config.arguments = ["--fixture-window"] }
             NSWorkspace.shared.openApplication(at: target, configuration: config) { [weak self] application, error in
                 DispatchQueue.main.async {
@@ -276,6 +282,9 @@ final class DockProbe: NSObject, NSApplicationDelegate {
             guard phase.sameRunningProcess, phase.runningTargetMatches, phase.contentsUnchanged, phase.defaultVerify.status == 0 else {
                 throw ProbeError("\(name): process/content/normal-signature invariant failed")
             }
+            if usesCDP && phase.metadata != originalMetadata {
+                throw ProbeError("\(name): CDP-only probe unexpectedly changed application file-icon metadata")
+            }
             let cdhash = phase.signature.output.split(separator: "\n").filter { $0.hasPrefix("CDHash=") }.joined(separator: "\n")
             if let before = baselineCDHash {
                 guard cdhash == before else { throw ProbeError("Original code directory hash changed") }
@@ -314,6 +323,7 @@ final class DockProbe: NSObject, NSApplicationDelegate {
     }
 
     func connectDebugger() {
+        if usesAuthenticatedBridge { connectAuthenticatedBridge(deadline: Date().addingTimeInterval(90)); return }
         let deadline = Date().addingTimeInterval(25)
         timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] timer in
             guard let self = self, let profile = ProcessInfo.processInfo.environment["ASIDE_PROBE_PROFILE"] else { timer.invalidate(); return }
@@ -334,6 +344,7 @@ final class DockProbe: NSObject, NSApplicationDelegate {
     }
 
     func applyCDP(_ color: String, phase: String) {
+        if usesAuthenticatedBridge { applyAuthenticatedIcon(color, phase: phase); return }
         do {
             guard let socket = socket else { throw ProbeError("No isolated browser CDP socket") }
             commandID += 1
@@ -347,6 +358,54 @@ final class DockProbe: NSObject, NSApplicationDelegate {
                 self.receiveCDP(id: id, color: color, phase: phase)
             }
         } catch { fail(error) }
+    }
+
+    func authenticatedCommand(_ args: [String]) throws -> CommandResult {
+        let environment = ProcessInfo.processInfo.environment
+        guard let node = environment["ASIDE_PROBE_AUTH_NODE"],
+              let client = environment["ASIDE_PROBE_AUTH_CLIENT"],
+              let native = environment["ASIDE_PROBE_AUTH_NATIVE"],
+              let ws = environment["ASIDE_PROBE_AUTH_WS"] else {
+            throw ProbeError("Authenticated probe requires explicit Node, native module, client, and ws paths")
+        }
+        return try command(node, [client, "--native", native, "--ws", ws] + args)
+    }
+
+    func connectAuthenticatedBridge(deadline: Date) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let result = try self.authenticatedCommand(["--version"])
+                DispatchQueue.main.async {
+                    if result.status == 0 {
+                        do {
+                            try Data(result.output.utf8).write(to: self.output.appendingPathComponent("browser-version.json"))
+                            try writeJSON(["transport": "existing authenticated localhost:45103", "debuggingSwitchesAdded": "false", "profile": "fresh runner default profile"], self.output.appendingPathComponent("authenticated-transport.json"))
+                            self.applyCDP("black", phase: "01-black-cdp")
+                        } catch { self.fail(error) }
+                    } else if Date() < deadline {
+                        self.schedule(3) { self.connectAuthenticatedBridge(deadline: deadline) }
+                    } else { self.fail(ProbeError("Existing Aside bridge authentication did not become ready: " + result.output)) }
+                }
+            } catch { DispatchQueue.main.async { self.fail(error) } }
+        }
+    }
+
+    func applyAuthenticatedIcon(_ color: String, phase: String) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let result = try self.authenticatedCommand(["--icon", self.assets.appendingPathComponent(color + ".png").path])
+                guard result.status == 0 else { throw ProbeError("Authenticated Dock command failed: " + result.output) }
+                try Data(result.output.utf8).write(to: self.output.appendingPathComponent(phase + "-cdp-response.json"))
+                DispatchQueue.main.async {
+                    self.schedule(3) {
+                        self.runPhase(phase) {
+                            if color == "black" { self.applyCDP("white", phase: "02-white-cdp") }
+                            else { self.finish() }
+                        }
+                    }
+                }
+            } catch { DispatchQueue.main.async { self.fail(error) } }
+        }
     }
 
     func receiveCDP(id: Int, color: String, phase: String) {

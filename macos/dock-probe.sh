@@ -63,7 +63,22 @@ ditto "$ASIDE_SOURCE" "$ASIDE"
 hdiutil detach "$MOUNT" > "$OUTPUT/unmount.txt"
 MOUNTED=0
 codesign --display --verbose=4 "$ASIDE" > "$OUTPUT/aside-baseline-signature.txt" 2>&1
+codesign --verify --deep --strict "$ASIDE"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$ASIDE" > "$OUTPUT/launchservices-register.txt" 2>&1
+
+AUTH_NATIVE=""
+if [[ "${ASIDE_PROBE_AUTH_BRIDGE:-1}" == "1" ]]; then
+  npm install --prefix "$WORK/cdp-client" --registry https://registry.npmjs.org --no-audit --no-fund --ignore-scripts --package-lock=false ws@8.18.3
+  while IFS= read -r CANDIDATE; do
+    if node -e 'const binding=require(process.argv[1]); if(typeof binding.run!=="function") process.exit(1)' "$CANDIDATE" >/dev/null 2>"$WORK/native-load-error.txt"; then
+      AUTH_NATIVE="$CANDIDATE"
+      break
+    fi
+  done < <(find "$ASIDE" -type f -name aside-native.node -print)
+  if [[ -z "$AUTH_NATIVE" ]]; then echo 'No loadable first-party native signing module was found in the verified Aside bundle.' >&2; exit 2; fi
+  printf '%s\n' "$AUTH_NATIVE" > "$OUTPUT/first-party-native-path.txt"
+  shasum -a 256 "$AUTH_NATIVE" > "$OUTPUT/first-party-native-sha256.txt"
+fi
 
 # This is test-only Dock fixture setup, not a production/customization API.
 # The complete previous preference domain is restored by cleanup, even on error.
@@ -103,7 +118,10 @@ pin_app "$ASIDE"
 /usr/bin/defaults write com.apple.dock orientation -string bottom
 /usr/bin/defaults write com.apple.dock tilesize -int 64
 /usr/bin/killall Dock
-if ASIDE_DOCK_PROBE_REFRESH=1 ASIDE_PROBE_CDP_ONLY="${ASIDE_PROBE_CDP_ONLY:-1}" ASIDE_PROBE_PROFILE="$WORK/profile" "$WORK/dock-probe" "$ASIDE" "$ROOT/assets" "$OUTPUT/aside" aside; then
+if ASIDE_DOCK_PROBE_REFRESH=1 ASIDE_PROBE_AUTH_BRIDGE="${ASIDE_PROBE_AUTH_BRIDGE:-1}" ASIDE_PROBE_CDP_ONLY="${ASIDE_PROBE_CDP_ONLY:-1}" ASIDE_PROBE_PROFILE="$WORK/profile" \
+   ASIDE_PROBE_AUTH_NODE="$(command -v node)" ASIDE_PROBE_AUTH_CLIENT="$ROOT/macos/aside-auth-client.mjs" \
+   ASIDE_PROBE_AUTH_NATIVE="$AUTH_NATIVE" ASIDE_PROBE_AUTH_WS="$WORK/cdp-client/node_modules/ws" \
+   "$WORK/dock-probe" "$ASIDE" "$ROOT/assets" "$OUTPUT/aside" aside; then
   echo 'Aside diagnostic commands completed. Review screenshots; this is not a Dock-support acceptance claim.'
 else
   echo 'Aside diagnostic failed; see phases.json/errors.json. No release conclusion is permitted.' >&2
