@@ -1,0 +1,12 @@
+{
+  "name": "aside-clean-logo-assets",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Deterministic rendering of the original Aside vector mark",
+  "scripts": {
+    "assets:render": "node tools/render-svg.cjs"
+  },
+  "devDependencies": {
+    "@resvg/resvg-js": "2.6.2"
+  }
+}

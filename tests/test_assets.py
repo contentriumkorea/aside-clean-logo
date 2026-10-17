@@ -1,5 +1,8 @@
 import struct
+import hashlib
+import json
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from PIL import Image, ImageChops
@@ -8,6 +11,26 @@ ASSETS = Path(__file__).resolve().parents[1] / 'assets'
 
 
 class IconAssets(unittest.TestCase):
+    def test_official_bezier_coordinates_are_preserved(self):
+        source = json.loads((ASSETS / 'source-path.json').read_text(encoding='utf-8'))
+        self.assertEqual(hashlib.sha256(source['path'].encode()).hexdigest(), source['path_sha256'])
+        for color in ('black', 'white'):
+            tree = ET.parse(ASSETS / (color + '.svg'))
+            original = tree.find('.//{http://www.w3.org/2000/svg}path[@id="original-bezier"]')
+            self.assertEqual(original.attrib['d'], source['path'])
+
+    def test_central_star_pixels_stay_exact(self):
+        fixture = Path(__file__).parent / 'fixtures'
+        original = Image.open(fixture / 'original-mark.png').convert('RGBA').getchannel('A')
+        edited = Image.open(ASSETS / 'black.png').convert('RGBA').getchannel('A')
+        protected = Image.open(fixture / 'star-lock.png').convert('RGBA').getchannel('A').point(lambda v: 255 if v == 255 else 0)
+        self.assertIsNone(ImageChops.multiply(ImageChops.difference(original, edited), protected).getbbox())
+
+    def test_thinning_never_adds_pixels_outside_original(self):
+        original = Image.open(Path(__file__).parent / 'fixtures/original-mark.png').convert('RGBA').getchannel('A')
+        edited = Image.open(ASSETS / 'black.png').convert('RGBA').getchannel('A')
+        self.assertIsNone(ImageChops.subtract(edited, original).getbbox())
+
     def test_color_variants_keep_identical_geometry(self):
         black = Image.open(ASSETS / 'black.png').convert('RGBA')
         white = Image.open(ASSETS / 'white.png').convert('RGBA')

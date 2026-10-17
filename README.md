@@ -2,6 +2,8 @@
 
 Clean, transparent black/white icons for the Aside desktop browser. **Dark appearance → white. Light appearance → black.** The central sparkle stays bold while the circular and curved lines are thinner.
 
+The artwork uses the original vector paths from [Aside's official website](https://aside.com/), with no AI redrawing. The original Bezier coordinates and outer silhouette are retained. Internal boundaries are inset by 0.18 vector units, and the central sparkle's protected pixels are copied exactly from the original rendering. These invariants are tested.
+
 ![Black and white icon previews](assets/preview.png)
 
 [![Install for Windows](https://img.shields.io/badge/Windows-Download_Setup-0078D4?style=for-the-badge&logo=windows)](https://github.com/contentriumkorea/aside-clean-logo/releases/latest/download/Aside-Clean-Logo-Windows-Setup.exe)
@@ -36,6 +38,7 @@ The helper creates an **Aside Clean Logo Finder alias on your Desktop**, pointin
 - Windows: `powershell -NoProfile -File windows/build.ps1`
 - macOS: `bash macos/build.sh` (universal Apple Silicon + Intel, macOS 12+)
 - Shared assets: `python -m pip install Pillow==10.4.0` then `python -m unittest discover -s tests -v`
+- Rebuild vector assets: `npm ci --ignore-scripts` then `python tools/build-assets.py`. The editable masters are `assets/black.svg` and `assets/white.svg`.
 
 GitHub Actions builds native installers and runs disposable fixtures on both platforms. Release checksums are supplied as `SHA256SUMS.txt`. Native macOS fixture tests do not replace real Aside testing on a Mac.
 
