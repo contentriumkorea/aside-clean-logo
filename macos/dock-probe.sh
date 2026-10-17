@@ -14,14 +14,17 @@ WORK="$(mktemp -d "${TMPDIR:-/tmp}/aside-dock-probe.XXXXXX")"
 MOUNT="$WORK/mounted"
 DOCK_BACKUP="$WORK/dock-before.plist"
 MOUNTED=0
+ASIDE_CREATED=0
+ASIDE="$HOME/Applications/Aside.app"
 cleanup() {
   if [[ "$MOUNTED" == "1" ]]; then hdiutil detach "$MOUNT" >/dev/null || true; fi
   if [[ -f "$DOCK_BACKUP" ]]; then
     /usr/bin/defaults import com.apple.dock "$DOCK_BACKUP" >/dev/null
     /usr/bin/killall Dock >/dev/null 2>&1 || true
   fi
-  # WORK is always the direct output of mktemp under the runner's temp directory.
-  rm -rf "$WORK"
+  if [[ "$ASIDE_CREATED" == "1" ]]; then rm -rf "$ASIDE" || echo 'Warning: runner-owned Aside copy could not be fully removed.' >&2; fi
+  # Profiles stay under the runner's mktemp directory and are never uploaded.
+  rm -rf "$WORK" || echo 'Warning: temporary probe/profile files remain for runner teardown.' >&2
 }
 trap cleanup EXIT
 
@@ -53,11 +56,14 @@ hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT" "$WORK/Aside.dmg" > "$OU
 MOUNTED=1
 ASIDE_SOURCE="$(find "$MOUNT" -maxdepth 3 -type d -name 'Aside.app' -print -quit)"
 if [[ -z "$ASIDE_SOURCE" ]]; then echo 'Official disk image contains no Aside.app' >&2; exit 2; fi
-ASIDE="$WORK/Aside.app"
+if [[ -e "$ASIDE" ]]; then echo 'Refusing to overwrite an existing ~/Applications/Aside.app' >&2; exit 2; fi
+mkdir -p "$HOME/Applications"
+ASIDE_CREATED=1
 ditto "$ASIDE_SOURCE" "$ASIDE"
 hdiutil detach "$MOUNT" > "$OUTPUT/unmount.txt"
 MOUNTED=0
 codesign --display --verbose=4 "$ASIDE" > "$OUTPUT/aside-baseline-signature.txt" 2>&1
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$ASIDE" > "$OUTPUT/launchservices-register.txt" 2>&1
 
 # This is test-only Dock fixture setup, not a production/customization API.
 # The complete previous preference domain is restored by cleanup, even on error.
@@ -77,7 +83,6 @@ PY
   /usr/bin/defaults write com.apple.dock persistent-apps -array-add "$ENTRY"
 }
 pin_app "$FIXTURE"
-pin_app "$ASIDE"
 /usr/bin/defaults write com.apple.dock autohide -bool false
 /usr/bin/defaults write com.apple.dock orientation -string bottom
 /usr/bin/defaults write com.apple.dock tilesize -int 64
@@ -90,16 +95,21 @@ else
   echo 'Fixture diagnostic failed; keep the report and continue to the independent Aside probe.' >&2
   RESULT=1
 fi
-if ASIDE_DOCK_PROBE_REFRESH=1 "$WORK/dock-probe" "$ASIDE" "$ROOT/assets" "$OUTPUT/aside" aside; then
+# Remove the fixture pin before the browser experiment so it cannot be mistaken
+# for the actual running Aside tile in screenshots. Retain only the Aside pin.
+/usr/bin/defaults import com.apple.dock "$DOCK_BACKUP"
+pin_app "$ASIDE"
+/usr/bin/defaults write com.apple.dock autohide -bool false
+/usr/bin/defaults write com.apple.dock orientation -string bottom
+/usr/bin/defaults write com.apple.dock tilesize -int 64
+/usr/bin/killall Dock
+if ASIDE_DOCK_PROBE_REFRESH=1 ASIDE_PROBE_CDP_ONLY="${ASIDE_PROBE_CDP_ONLY:-1}" ASIDE_PROBE_PROFILE="$WORK/profile" "$WORK/dock-probe" "$ASIDE" "$ROOT/assets" "$OUTPUT/aside" aside; then
   echo 'Aside diagnostic commands completed. Review screenshots; this is not a Dock-support acceptance claim.'
 else
   echo 'Aside diagnostic failed; see phases.json/errors.json. No release conclusion is permitted.' >&2
   RESULT=1
 fi
 
-# The clean diagnostic profile is intentionally excluded from uploaded artifacts.
-# It is newly created here and contains no user's browser data.
-if [[ -d "$OUTPUT/aside/isolated-profile" ]]; then rm -rf "$OUTPUT/aside/isolated-profile"; fi
 sw_vers > "$OUTPUT/runner-version.txt"
 echo "Probe exit status: $RESULT. Default, strict, and Gatekeeper results are separate facts."
 exit "$RESULT"

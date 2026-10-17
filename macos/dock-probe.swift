@@ -1,5 +1,7 @@
 // Diagnostic only. Never included in the installer or used against a user's app.
 import AppKit
+import ApplicationServices
+import CoreServices
 import CryptoKit
 import Darwin
 
@@ -53,14 +55,18 @@ func restoreAttribute(_ data: Data?, _ target: URL, _ name: String) throws {
 func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
 
 func contentsManifest(_ target: URL) throws -> [String: String] {
-    let base = target.appendingPathComponent("Contents")
+    let base = target.appendingPathComponent("Contents", isDirectory: true).standardizedFileURL.resolvingSymlinksInPath()
     guard let walker = fm.enumerator(at: base, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey]) else {
         throw ProbeError("Cannot enumerate signed Contents")
     }
     var files: [String: String] = [:]
     for case let url as URL in walker {
         let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-        let relative = String(url.path.dropFirst(base.path.count + 1))
+        let components = url.standardizedFileURL.pathComponents
+        guard Array(components.prefix(base.pathComponents.count)) == base.pathComponents else {
+            throw ProbeError("Resource path was not under the normalized Contents directory")
+        }
+        let relative = components.dropFirst(base.pathComponents.count).joined(separator: "/")
         if values.isSymbolicLink == true {
             files[relative] = "symlink:" + (try fm.destinationOfSymbolicLink(atPath: url.path))
         } else if values.isRegularFile == true {
@@ -111,6 +117,13 @@ struct Phase: Codable {
     let name: String
     let pid: Int32?
     let sameRunningProcess: Bool
+    let targetBundleURL: String
+    let runningBundleURL: String?
+    let runningExecutableURL: String?
+    let runningTargetMatches: Bool
+    let processCommand: CommandResult
+    let dockPreferences: CommandResult
+    let dockAccessibility: [[String: String]]
     let defaultVerify: CommandResult
     let strictVerify: CommandResult
     let gatekeeper: CommandResult
@@ -119,6 +132,34 @@ struct Phase: Codable {
     let metadata: Metadata
     let screenshot: CommandResult
     let dockWindows: [[String: String]]
+}
+
+func dockAccessibility() -> [[String: String]] {
+    guard let dock = NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.dock").first else { return [["error": "Dock is not running"]] }
+    var result: [[String: String]] = [["trusted": String(AXIsProcessTrusted()), "dockPID": String(dock.processIdentifier)]]
+    func inspect(_ element: AXUIElement, depth: Int) {
+        guard depth < 5, result.count < 300 else { return }
+        var values: [String: String] = [:]
+        var names: CFArray?
+        let status = AXUIElementCopyAttributeNames(element, &names)
+        if status != .success { result.append(["error": "AX attribute inspection: \(status.rawValue)"]); return }
+        let attributes = names as? [String] ?? []
+        for name in attributes where name != "AXChildren" && name != "AXParent" && name != "AXTopLevelUIElement" {
+            var value: CFTypeRef?
+            if AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success, let value = value {
+                values[name] = String(describing: value)
+            }
+        }
+        values["availableAttributes"] = attributes.joined(separator: ",")
+        if depth > 1 || values["AXSubrole"]?.contains("DockItem") == true { result.append(values) }
+        var children: CFTypeRef?
+        if AXUIElementCopyAttributeValue(element, kAXChildrenAttribute as CFString, &children) == .success,
+           let array = children as? [AXUIElement] {
+            for child in array { inspect(child, depth: depth + 1) }
+        }
+    }
+    inspect(AXUIElementCreateApplication(dock.processIdentifier), depth: 0)
+    return result
 }
 
 final class DockProbe: NSObject, NSApplicationDelegate {
@@ -136,6 +177,9 @@ final class DockProbe: NSObject, NSApplicationDelegate {
     var errors: [String] = []
     var timer: Timer?
     var fixtureWindow: NSWindow?
+    var socket: URLSessionWebSocketTask?
+    var commandID = 0
+    var usesCDP: Bool { actualAside && ProcessInfo.processInfo.environment["ASIDE_PROBE_CDP_ONLY"] == "1" }
 
     init(target: URL, assets: URL, output: URL, actualAside: Bool) {
         self.target = target; self.assets = assets; self.output = output; self.actualAside = actualAside
@@ -160,7 +204,11 @@ final class DockProbe: NSObject, NSApplicationDelegate {
             config.activates = true
             config.createsNewApplicationInstance = true
             if actualAside {
-                config.arguments = ["--user-data-dir=\(output.appendingPathComponent("isolated-profile").path)", "--no-first-run", "--no-default-browser-check", "about:blank"]
+                guard let profile = ProcessInfo.processInfo.environment["ASIDE_PROBE_PROFILE"] else {
+                    throw ProbeError("ASIDE_PROBE_PROFILE must point outside uploaded artifacts")
+                }
+                config.arguments = ["--user-data-dir=\(profile)", "--no-first-run", "--no-default-browser-check", "about:blank"]
+                if usesCDP { config.arguments += ["--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1"] }
             } else { config.arguments = ["--fixture-window"] }
             NSWorkspace.shared.openApplication(at: target, configuration: config) { [weak self] application, error in
                 DispatchQueue.main.async {
@@ -182,7 +230,12 @@ final class DockProbe: NSObject, NSApplicationDelegate {
             if app.isTerminated { timer.invalidate(); self.fail(ProbeError("App exited before launch completed")); return }
             if app.isFinishedLaunching {
                 timer.invalidate()
-                self.schedule(2) { self.runPhase("00-original") { self.apply("black", phase: "01-black-natural") } }
+                self.schedule(2) {
+                    self.runPhase("00-original") {
+                        if self.usesCDP { self.connectDebugger() }
+                        else { self.apply("black", phase: "01-black-natural") }
+                    }
+                }
             } else if Date() > deadline {
                 timer.invalidate(); self.fail(ProbeError("Application launch did not complete"))
             }
@@ -204,6 +257,13 @@ final class DockProbe: NSObject, NSApplicationDelegate {
             }.map { window in window.mapValues { String(describing: $0) } }
             let phase = try Phase(name: name, pid: app?.processIdentifier,
                                   sameRunningProcess: app?.processIdentifier == originalPID && app?.isTerminated == false,
+                                  targetBundleURL: target.standardizedFileURL.resolvingSymlinksInPath().path,
+                                  runningBundleURL: app?.bundleURL?.standardizedFileURL.resolvingSymlinksInPath().path,
+                                  runningExecutableURL: app?.executableURL?.standardizedFileURL.resolvingSymlinksInPath().path,
+                                  runningTargetMatches: app?.bundleURL?.standardizedFileURL.resolvingSymlinksInPath().path == target.standardizedFileURL.resolvingSymlinksInPath().path,
+                                  processCommand: command("/bin/ps", ["-p", String(app?.processIdentifier ?? -1), "-o", "pid=,comm=,args="]),
+                                  dockPreferences: command("/usr/bin/defaults", ["export", "com.apple.dock", "-"]),
+                                  dockAccessibility: dockAccessibility(),
                                   defaultVerify: command("/usr/bin/codesign", ["--verify", "--deep", "--verbose=4", target.path]),
                                   strictVerify: command("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=4", target.path]),
                                   gatekeeper: command("/usr/sbin/spctl", ["--assess", "--type", "execute", "--verbose=4", "--ignore-cache", target.path]),
@@ -213,7 +273,7 @@ final class DockProbe: NSObject, NSApplicationDelegate {
             phases.append(phase)
             try writeJSON(phases, output.appendingPathComponent("phases.json"))
             print("\(name): pid=\(phase.pid ?? -1) samePID=\(phase.sameRunningProcess) normal=\(phase.defaultVerify.status) strict=\(phase.strictVerify.status) spctl=\(phase.gatekeeper.status) unchangedContents=\(phase.contentsUnchanged) screenshot=\(capture.status)")
-            guard phase.sameRunningProcess, phase.contentsUnchanged, phase.defaultVerify.status == 0 else {
+            guard phase.sameRunningProcess, phase.runningTargetMatches, phase.contentsUnchanged, phase.defaultVerify.status == 0 else {
                 throw ProbeError("\(name): process/content/normal-signature invariant failed")
             }
             let cdhash = phase.signature.output.split(separator: "\n").filter { $0.hasPrefix("CDHash=") }.joined(separator: "\n")
@@ -253,16 +313,89 @@ final class DockProbe: NSObject, NSApplicationDelegate {
         } catch { fail(error) }
     }
 
+    func connectDebugger() {
+        let deadline = Date().addingTimeInterval(25)
+        timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] timer in
+            guard let self = self, let profile = ProcessInfo.processInfo.environment["ASIDE_PROBE_PROFILE"] else { timer.invalidate(); return }
+            let portFile = URL(fileURLWithPath: profile).appendingPathComponent("DevToolsActivePort")
+            if let data = try? String(contentsOf: portFile, encoding: .utf8) {
+                let lines = data.split(separator: "\n")
+                if lines.count >= 2, let port = Int(lines[0]), (1...65535).contains(port), lines[1].hasPrefix("/devtools/browser/"),
+                   let endpoint = URL(string: "ws://127.0.0.1:\(port)\(lines[1])") {
+                    timer.invalidate()
+                    self.socket = URLSession.shared.webSocketTask(with: endpoint)
+                    self.socket?.resume()
+                    self.applyCDP("black", phase: "01-black-cdp")
+                    return
+                }
+            }
+            if Date() > deadline { timer.invalidate(); self.fail(ProbeError("The isolated profile did not publish DevToolsActivePort")) }
+        }
+    }
+
+    func applyCDP(_ color: String, phase: String) {
+        do {
+            guard let socket = socket else { throw ProbeError("No isolated browser CDP socket") }
+            commandID += 1
+            let id = commandID
+            let png = try Data(contentsOf: assets.appendingPathComponent(color + ".png"))
+            let request: [String: Any] = ["id": id, "method": "Browser.setDockTile", "params": ["image": png.base64EncodedString()]]
+            let message = try JSONSerialization.data(withJSONObject: request)
+            socket.send(.string(String(decoding: message, as: UTF8.self))) { [weak self] error in
+                guard let self = self else { return }
+                if let error = error { DispatchQueue.main.async { self.fail(error) }; return }
+                self.receiveCDP(id: id, color: color, phase: phase)
+            }
+        } catch { fail(error) }
+    }
+
+    func receiveCDP(id: Int, color: String, phase: String) {
+        socket?.receive { [weak self] result in
+            guard let self = self else { return }
+            do {
+                let message = try result.get()
+                let data: Data
+                switch message {
+                case .string(let string): data = Data(string.utf8)
+                case .data(let value): data = value
+                @unknown default: throw ProbeError("Unknown CDP transport message")
+                }
+                guard let response = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw ProbeError("Malformed CDP response") }
+                if response["id"] as? Int != id { self.receiveCDP(id: id, color: color, phase: phase); return }
+                try data.write(to: self.output.appendingPathComponent(phase + "-cdp-response.json"))
+                if let error = response["error"] { throw ProbeError("Browser.setDockTile rejected: \(error)") }
+                DispatchQueue.main.async {
+                    self.schedule(3) {
+                        self.runPhase(phase) {
+                            if color == "black" { self.applyCDP("white", phase: "02-white-cdp") }
+                            else { self.finish() }
+                        }
+                    }
+                }
+            } catch { DispatchQueue.main.async { self.fail(error) } }
+        }
+    }
+
     func refreshDockIfRequested(phase: String, next: @escaping () -> Void) {
         if ProcessInfo.processInfo.environment["ASIDE_DOCK_PROBE_REFRESH"] == "1" {
             do {
                 guard ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true" else {
                     throw ProbeError("Dock refresh is allowed only in an ephemeral GitHub runner")
                 }
-                let refresh = try command("/usr/bin/killall", ["Dock"])
-                try writeJSON(refresh, output.appendingPathComponent("dock-refresh-command.json"))
-                guard refresh.status == 0 else { throw ProbeError("Dock refresh failed") }
-                schedule(3) { self.runPhase(phase, next: next) }
+                NSWorkspace.shared.noteFileSystemChanged(target.path)
+                let registration = LSRegisterURL(target as CFURL, true)
+                try writeJSON(CommandResult(status: registration, output: "NSWorkspace.noteFileSystemChanged + LSRegisterURL(update:true)"), output.appendingPathComponent(phase + "-platform-cache-command.json"))
+                guard registration == 0 else { throw ProbeError("LaunchServices registration refresh failed") }
+                schedule(2) {
+                    self.runPhase(phase.replacingOccurrences(of: "dock-refreshed", with: "platform-notified")) {
+                        do {
+                            let refresh = try command("/usr/bin/killall", ["Dock"])
+                            try writeJSON(refresh, self.output.appendingPathComponent(phase + "-dock-command.json"))
+                            guard refresh.status == 0 else { throw ProbeError("Dock refresh failed") }
+                            self.schedule(3) { self.runPhase(phase, next: next) }
+                        } catch { self.fail(error) }
+                    }
+                }
             } catch { fail(error) }
         } else { next() }
     }
@@ -276,6 +409,7 @@ final class DockProbe: NSObject, NSApplicationDelegate {
 
     func finish() {
         timer?.invalidate()
+        socket?.cancel(with: .normalClosure, reason: nil)
         do {
             if let originalMetadata = originalMetadata { try originalMetadata.restore(target) }
             let after = try contentsManifest(target)
