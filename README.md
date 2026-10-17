@@ -7,7 +7,8 @@ The artwork uses the original vector paths from [Aside's official website](https
 ![Black and white icon previews](assets/preview.png)
 
 [![Install for Windows](https://img.shields.io/badge/Windows-Download_Setup-0078D4?style=for-the-badge&logo=windows)](https://github.com/contentriumkorea/aside-clean-logo/releases/latest/download/Aside-Clean-Logo-Windows-Setup.exe)
-[![Install for macOS](https://img.shields.io/badge/macOS-Download_Installer-222222?style=for-the-badge&logo=apple)](https://github.com/contentriumkorea/aside-clean-logo/releases/latest/download/Aside-Clean-Logo-macOS.dmg)
+
+**macOS distribution is on hold.** A working installer for the real running Dock icon is not available yet.
 
 ## Windows
 
@@ -20,26 +21,23 @@ Remove through **Settings → Apps → Aside Clean Logo** to restore the origina
 
 ## macOS
 
-1. Install Aside first. Download and open **Aside-Clean-Logo-macOS.dmg**.
-2. Open **Aside Clean Logo**, select Aside.app if needed, and press **Install**.
+The real running Aside Dock tile is required. Finder aliases and app metadata alone do not reliably update that tile, so the macOS installer is not included in releases. Source and CI artifacts under `macos/` are development experiments, not a supported installation.
 
-The helper creates an **Aside Clean Logo Finder alias on your Desktop**, pointing to your installed Aside browser. This shortcut's icon switches with system appearance and the helper starts at sign-in. The original Aside.app and its code signature remain untouched. Open the utility again to uninstall and remove the shortcut.
-
-**Dock limitation:** the original Aside application's Dock icon is not changed. The utility cannot change another running app's Dock tile through a supported API. It does not restart Aside or the Dock. This release is ad-hoc signed, not Apple-notarized; macOS may require approval through its normal security interface. See [macOS details](macos/README.txt).
+An isolated test proved that Chromium's `Browser.setDockTile` can change the running tile without replacing signed browser resources. The production route through Aside's existing authenticated bridge is blocked by macOS Keychain entitlement error `-34018` when its signer runs outside Aside. Administrator approval does not resolve that entitlement boundary. A supported first-party integration is needed before macOS installation can be offered.
 
 ## 한국어
 
 - **윈도우:** 설치 파일 실행 → 관리자 승인 → **Install**. 다크 모드는 흰색, 밝은 모드는 검정 로고로 자동 전환합니다. 삭제하면 원래 아이콘을 복원합니다.
-- **맥:** DMG 열기 → 앱 실행 → **Install**. 바탕화면에 Aside 실행 바로가기를 만들고 아이콘을 자동 전환합니다. 원본 앱과 Dock 아이콘은 변경하지 않습니다.
+- **맥:** 실행 중인 Dock 아이콘 변경에 필요한 Aside 인증 권한 문제로 배포를 보류했습니다. 현재 Mac 개발 빌드는 설치용으로 제공하지 않습니다.
 - 브라우저 본체·로그인·북마크 등 사용자 데이터는 변경하지 않습니다.
 
 ## Build and verification
 
 - Windows: `powershell -NoProfile -File windows/build.ps1`
-- macOS: `bash macos/build.sh` (universal Apple Silicon + Intel, macOS 12+)
+- macOS development only: `bash macos/build.sh` (universal Apple Silicon + Intel, macOS 12+)
 - Shared assets: `python -m pip install Pillow==10.4.0` then `python -m unittest discover -s tests -v`
 - Rebuild vector assets: `npm ci --ignore-scripts` then `python tools/build-assets.py`. The editable masters are `assets/black.svg` and `assets/white.svg`.
 
-GitHub Actions builds native installers and runs disposable fixtures on both platforms. Release checksums are supplied as `SHA256SUMS.txt`. Native macOS fixture tests do not replace real Aside testing on a Mac.
+GitHub Actions builds Windows installers and macOS development artifacts and runs disposable fixtures on both platforms. Published releases contain the verified Windows installer and `SHA256SUMS.txt`. Native macOS fixture tests do not establish support for the running Aside Dock tile.
 
 Unofficial customization tool. Aside's name and logo belong to their respective owners; this project is not affiliated with Aside. Source code is MIT licensed; brand assets are excluded from that license.
