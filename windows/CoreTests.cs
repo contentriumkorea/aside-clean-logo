@@ -12,6 +12,13 @@ namespace AsideCleanLogo {
         static void Check(bool ok, string name) { if (!ok) throw new Exception("FAIL: " + name); Console.WriteLine("PASS: " + name); }
         public static void Run() {
             Check(Theme.Color(0) == "white" && Theme.Color(1) == "black", "system dark/light mapping");
+            int discoveries=0;var cache=new LinkDiscoveryCache(delegate {discoveries++;return discoveries==1?new [] {"existing.lnk"}:new [] {"existing.lnk","new.lnk"};});
+            DateTime tick=new DateTime(2026,1,1,0,0,0,DateTimeKind.Utc);
+            for(int i=0;i<40;i++)CheckCacheTick(cache.Current(tick.AddSeconds(i)),"existing.lnk");
+            Check(discoveries==1,"rapid watcher ticks reuse discovered links without scanning unrelated shortcuts");
+            Check(cache.Current(tick.AddSeconds(61)).Contains("new.lnk")&&discoveries==2,"periodic rescan discovers newly added shortcut");
+            cache.Forget("existing.lnk");
+            Check(!cache.Current(tick.AddSeconds(62)).Contains("existing.lnk")&&discoveries==2,"removed or retargeted shortcut is dropped without full discovery");
             Check(Program.TaskXml("AsideCleanLogo-absent-"+Guid.NewGuid().ToString("N"))==null,"real Task Scheduler missing-task lookup");
             Program.DeleteTask("AsideCleanLogo-absent-"+Guid.NewGuid().ToString("N"));
             Check(true,"real Task Scheduler nonexistent deletion is harmless");
@@ -100,5 +107,6 @@ namespace AsideCleanLogo {
                 Console.WriteLine("All disposable Windows behavior tests passed.");
             } finally {Directory.Delete(temp,true);}
         }
+        static void CheckCacheTick(string[] current,string expected) {if(current.Length!=1||current[0]!=expected)throw new Exception("Cached discovery changed before refresh");}
     }
 }

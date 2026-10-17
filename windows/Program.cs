@@ -206,14 +206,20 @@ namespace AsideCleanLogo {
     using(var stop=new EventWaitHandle(false,EventResetMode.ManualReset,EventName)) {
      var handles=new Dictionary<string,IntPtr[]>();foreach(string c in new [] {"white","black"}) {var h=new [] {Native.LoadImage(IntPtr.Zero,Path.Combine(Home,c+".ico"),1,32,32,16),Native.LoadImage(IntPtr.Zero,Path.Combine(Home,c+".ico"),1,256,256,16)};if(h.Any(p=>p==IntPtr.Zero))throw new IOException("Icon could not be loaded");handles[c]=h;}
      var windowStore=new WindowStore(Home,exe);
+     var linkCache=new LinkDiscoveryCache(delegate {return Matching(AllLinks(),exe);});
+     var linkStore=new LinkStore(Home,Roots,exe);
      try {
       do {
-       string color=Color();var errors=new List<string>();int count=0,windows=0,verified=0,relaunch=0;
-       try {var store=new LinkStore(Home,Roots,exe);var links=Matching(AllLinks(),exe);count=links.Length;
-        foreach(string path in links)try {if(!String.Equals(Shortcut.Read(path).Icon,Path.Combine(Home,color+".ico")+",0",StringComparison.OrdinalIgnoreCase)){store.Apply(new [] {path},Path.Combine(Home,color+".ico"));Native.Notify(new [] {path});}}catch(Exception ex){errors.Add(ex.Message);}
+       var cycle=Stopwatch.StartNew();string color=Color();var errors=new List<string>();int count=0,windows=0,verified=0,relaunch=0;
+       try {var links=linkCache.Current(DateTime.UtcNow);color=Color();
+        foreach(string path in links)try {
+         if(!File.Exists(path)){linkCache.Forget(path);continue;}
+         var data=Shortcut.Read(path);if(!String.Equals(data.Target,exe,StringComparison.OrdinalIgnoreCase)){linkCache.Forget(path);continue;}count++;
+         if(!String.Equals(data.Icon,Path.Combine(Home,color+".ico")+",0",StringComparison.OrdinalIgnoreCase)){linkStore.Apply(new [] {path},Path.Combine(Home,color+".ico"));Native.Notify(new [] {path});}
+        }catch(Exception ex){errors.Add(ex.Message);}
         foreach(var h in Native.Windows(exe)){windows++;if(Native.SetIcon(h,0,handles[color][0])&&Native.SetIcon(h,1,handles[color][1]))verified++;else errors.Add("Window icon update failed: "+h);try{if(windowStore.Apply(h,Path.Combine(Home,color+".ico")+",0"))relaunch++;}catch(Exception ex){errors.Add("Taskbar relaunch icon: "+ex.Message);}}
        } catch(Exception ex){errors.Add(ex.Message);}
-       Atomic(Path.Combine(Home,"status.json"),Json.Serialize(new {Ready=errors.Count==0,Color=color,Icon=Path.Combine(Home,color+".ico"),Shortcuts=count,Windows=windows,VerifiedWindows=verified,VerifiedRelaunchIcons=relaunch,Errors=errors,ProcessId=Process.GetCurrentProcess().Id,UpdatedAt=DateTimeOffset.Now.ToString("o")}));
+       Atomic(Path.Combine(Home,"status.json"),Json.Serialize(new {Ready=errors.Count==0,Color=color,Icon=Path.Combine(Home,color+".ico"),Shortcuts=count,Windows=windows,VerifiedWindows=verified,VerifiedRelaunchIcons=relaunch,DiscoveryScans=linkCache.Scans,LastDiscoveryAt=linkCache.LastScanUtc.ToString("o"),DiscoveryMilliseconds=linkCache.ScanMilliseconds,CycleMilliseconds=cycle.ElapsedMilliseconds,Errors=errors,ProcessId=Process.GetCurrentProcess().Id,UpdatedAt=DateTimeOffset.Now.ToString("o")}));
       } while(!stop.WaitOne(1500));
      } finally {windowStore.Restore();Native.RestoreFromExecutable(exe);foreach(var h in handles.Values)foreach(var icon in h)Native.DestroyIcon(icon);}
     }

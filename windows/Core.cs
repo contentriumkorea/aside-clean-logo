@@ -6,7 +6,21 @@ using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Xml.Linq;
+using System.Diagnostics;
 namespace AsideCleanLogo {
+ public class LinkDiscoveryCache {
+  readonly Func<string[]> discover;
+  List<string> paths=new List<string>();DateTime refreshAt=DateTime.MinValue;
+  public int Scans {get;private set;}
+  public long ScanMilliseconds {get;private set;}
+  public DateTime LastScanUtc {get;private set;}
+  public LinkDiscoveryCache(Func<string[]> discover){this.discover=discover;}
+  public string[] Current(DateTime utcNow){
+   if(utcNow>=refreshAt){var watch=Stopwatch.StartNew();var found=discover();paths=found.Distinct(StringComparer.OrdinalIgnoreCase).ToList();Scans++;ScanMilliseconds=watch.ElapsedMilliseconds;LastScanUtc=utcNow;refreshAt=utcNow.AddSeconds(60);}
+   return paths.ToArray();
+  }
+  public void Forget(string path){paths.RemoveAll(p=>String.Equals(p,path,StringComparison.OrdinalIgnoreCase));}
+ }
  public static class Theme {public static string Color(int light) { return light == 0 ? "white" : "black"; }}
  public class LinkData {public string Target;public string Icon;}
  public static class Shortcut {

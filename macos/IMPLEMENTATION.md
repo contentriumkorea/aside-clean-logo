@@ -1,55 +1,62 @@
 # macOS behavior and verification
 
-Build and test on a Mac with Xcode Command Line Tools:
-
 ```sh
 bash macos/build.sh
-# The build invokes the native fixture suite. Repeat it separately if needed:
+# The build invokes native fixture tests. Repeat them with:
 bash macos/test.sh
 ```
 
-The output is `dist/Aside-Clean-Logo-macOS.dmg`, containing a universal arm64/x86_64
-AppKit application with Install, Choose Aside, and Uninstall / Restore buttons.
-No Python, Homebrew, shell setup, or network download is needed on the target Mac.
-The development build requires Xcode, but the installed application does not.
+Output: `dist/Aside-Clean-Logo-macOS.dmg`, containing a universal arm64/x86_64
+macOS 12+ AppKit application with Install, Choose Aside, and Uninstall buttons.
+Target Macs do not need a development environment or network download.
 
-The launch agent uses the installed helper rather than an executable inside the
-mounted DMG. It runs only in the installing account's Aqua login session.
-`NSApplication.effectiveAppearance` is observed; a 10-second timer retries failed
-updates. The first original icon backup is immutable across reinstallations.
-Installation stages the replacement before stopping a previous watcher and keeps
-the previous helper, agent definition, loaded state, and current icon until a new
-watcher returns a unique-token acknowledgment after its first successful update.
-Apply, bootstrap, and readiness failures restore those previous files and restart
-the prior watcher. An incomplete rollback reports the retained recovery path.
-`NSWorkspace.setIcon` does the customization; original FinderInfo/resource-fork
-bytes and the pre-existing `Icon\r` file are saved and restored. Neither the Aside
-Contents directory nor browser user data is accessed by the implementation.
+## Native evidence and scope
 
-The native `--self-test` mode only operates on an explicitly supplied disposable
-fixture. It exercises both image variants, metadata changes/restoration, backup
-preservation, theme transitions and retry logic. `test.sh` verifies the fixture's
-signature and executable hash before and after. The build is universal and
-ad-hoc signed, without Developer ID credentials or notarization.
-Failure injection also exercises first-install bootstrap denial and upgrade
-apply/bootstrap/readiness failures with actual isolated file moves and icon
-restoration, plus rejection of absent, stale, and invalid readiness messages.
+The first native runner successfully compiled both architectures, but applying
+`NSWorkspace.setIcon` directly to a signed fixture failed
+`codesign --verify --deep --strict` with “resource fork, Finder information, or
+similar detritus not allowed.” Apple explains this restriction in
+[Technical Q&A QA1940](https://developer.apple.com/library/archive/qa/qa1940/_index.html).
+Verification has therefore **not** been weakened. Instead, only an installer-owned
+Finder alias on the user's Desktop receives custom-icon metadata. The real
+Aside.app is never modified, and strict signature validation remains in place.
 
-## Supported APIs and scope
+The desktop alias opens the original application and switches white in dark
+appearance and black in light appearance. The original application icon, other
+shortcuts, and running/pinned Dock tile remain unchanged. This is an explicit
+desktop-only macOS scope, not a promise of cross-process Dock customization.
 
-- Apple's [`NSWorkspace.setIcon(_:forFile:options:)`](https://developer.apple.com/documentation/appkit/nsworkspace/seticon(_:forfile:options:))
-  customizes the file icon. The return value is checked; permission denial is an error.
-- Apple's [`NSApplication.effectiveAppearance`](https://developer.apple.com/documentation/appkit/nsapplication/effectiveappearance)
-  is used to match `.darkAqua` and `.aqua` without private distributed notifications.
-- Apple's [`NSApplication.applicationIconImage`](https://developer.apple.com/documentation/appkit/nsapplication/applicationiconimage)
-  changes the application's own running Dock tile. This utility cannot use it to
-  control Aside's tile. Live cross-process Dock changes are not promised.
-- Apple documents [changing/restoring custom file icons](https://support.apple.com/guide/mac-help/change-icons-for-files-or-folders-on-mac-mchlp2313/mac)
-  in Finder. Existing Finder aliases and Dock tiles may retain cached icons;
-  the utility does not delete caches, restart processes, or patch signed resources.
-- Apple documents the user decision to [open an app from an unknown developer](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac).
-  The installer does not remove quarantine or alter security policy.
+## Implementation
 
-Real Aside installation permission behavior, its updater, running/pinned Dock
-refresh, and desktop alias refresh require actual-Mac validation. The fixture
-suite and successful packaging must not be described as those hardware tests.
+The native alias is created with Foundation's
+[`suitableForBookmarkFile`](https://developer.apple.com/documentation/corefoundation/cfurlbookmarkcreationoptions/suitableforbookmarkfile)
+and [`URL.writeBookmarkData`](https://developer.apple.com/documentation/foundation/url/writebookmarkdata(_:to:)).
+It is resolved and checked against the configured Aside target before changing
+its icon. An existing file at the chosen desktop path is never overwritten.
+Only the managed alias is passed to
+[`NSWorkspace.setIcon`](https://developer.apple.com/documentation/appkit/nsworkspace/seticon(_:forfile:options:)).
+Desktop permission denial is an error; no app ownership change or elevation is needed.
+
+The helper lives under per-user Application Support and a LaunchAgent runs it
+in that user's Aqua session. `NSApplication.effectiveAppearance` is observed,
+with a 10-second retry timer. Installation stages a signed replacement and saves
+the previous helper, agent definition, loaded state, and alias metadata. A unique
+token acknowledgment after the watcher's first successful update is required
+before installation succeeds. Apply/bootstrap/readiness failures restore the
+previous files and restart the old watcher; rollback failures identify recovery
+files. Uninstall stops the watcher and removes only its managed alias and files.
+
+## Tests and distribution
+
+The native suite verifies signed-fixture integrity with unchanged strict checks,
+actual Finder alias resolution, different light/dark icon resource forks, exact
+alias metadata rollback, first-backup preservation, removal on uninstall, and
+collision refusal. Failure tests inject apply/bootstrap/readiness errors and
+check helper/plist/loaded-state/alias recovery. Missing/stale readiness is rejected.
+`test.sh` also compares the fixture executable hash before and after.
+
+The app is ad-hoc signed, not Developer ID signed or notarized. Follow only
+[Apple's per-app approval flow](https://support.apple.com/guide/mac-help/open-a-mac-app-from-an-unknown-developer-mh40616/mac)
+if the user decides to trust the release. No quarantine or Gatekeeper bypass is
+included. Real Aside launching and Desktop privacy prompts require hardware
+validation; runner fixture results do not establish those behaviors.

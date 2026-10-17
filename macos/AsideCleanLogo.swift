@@ -1,5 +1,6 @@
 import AppKit
 import Darwin
+import UniformTypeIdentifiers
 
 private let fm = FileManager.default
 private let agentLabel = "com.contentrium.aside-clean-logo"
@@ -56,8 +57,8 @@ func writeAttribute(_ data: Data?, _ url: URL, _ name: String) throws {
     }
 }
 
-// NSWorkspace stores folder custom icons in FinderInfo and an Icon\r resource fork.
-// Save the original bytes rather than reconstructing an existing custom icon.
+// Preserve alias metadata exactly during rollback. Signed application bundles
+// are never passed to setIcon: FinderInfo/resource forks violate strict signing.
 struct OriginalIcon: Codable, Equatable {
     let finderInfo: Data?
     let resourceFork: Data?
@@ -70,7 +71,8 @@ struct OriginalIcon: Codable, Equatable {
         finderInfo = try readAttribute(target, "com.apple.FinderInfo")
         resourceFork = try readAttribute(target, "com.apple.ResourceFork")
         let icon = target.appendingPathComponent("Icon\r")
-        iconFileExists = fm.fileExists(atPath: icon.path)
+        let isDirectory = try target.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true
+        iconFileExists = isDirectory && fm.fileExists(atPath: icon.path)
         iconData = iconFileExists ? try Data(contentsOf: icon) : nil
         iconFinderInfo = iconFileExists ? try readAttribute(icon, "com.apple.FinderInfo") : nil
         iconResourceFork = iconFileExists ? try readAttribute(icon, "com.apple.ResourceFork") : nil
@@ -95,6 +97,7 @@ struct OriginalIcon: Codable, Equatable {
 
 struct Installation: Codable {
     let target: String
+    let alias: String
     let original: OriginalIcon
 }
 
@@ -107,11 +110,13 @@ func systemIsDark() -> Bool {
 final class IconEngine {
     let directory: URL
     let assets: URL
+    let aliasLocation: URL
     var stateURL: URL { directory.appendingPathComponent("installation.json") }
 
-    init(directory: URL, assets: URL) {
+    init(directory: URL, assets: URL, aliasLocation: URL? = nil) {
         self.directory = directory
         self.assets = assets
+        self.aliasLocation = aliasLocation ?? fm.homeDirectoryForCurrentUser.appendingPathComponent("Desktop/Aside Clean Logo.alias")
     }
 
     func load() throws -> Installation {
@@ -127,7 +132,10 @@ final class IconEngine {
             }
             return
         }
-        let state = try Installation(target: target.path, original: OriginalIcon(target: target))
+        guard !fm.fileExists(atPath: aliasLocation.path) else {
+            throw Failure("The desktop alias location already exists: \(aliasLocation.path). Rename that file first; existing desktop items are never overwritten.")
+        }
+        let state = try Installation(target: target.path, alias: aliasLocation.path, original: OriginalIcon(target: target))
         try fm.createDirectory(at: directory, withIntermediateDirectories: true)
         try JSONEncoder().encode(state).write(to: stateURL, options: .atomic)
     }
@@ -136,28 +144,40 @@ final class IconEngine {
         let state = try load()
         let target = URL(fileURLWithPath: state.target)
         try verifySignature(target)
+        let alias = URL(fileURLWithPath: state.alias)
+        if !fm.fileExists(atPath: alias.path) {
+            let bookmark = try target.bookmarkData(options: .suitableForBookmarkFile, includingResourceValuesForKeys: nil, relativeTo: nil)
+            try URL.writeBookmarkData(bookmark, to: alias)
+        }
+        let resolved = try URL(resolvingAliasFileAt: alias, options: [.withoutUI, .withoutMounting])
+        guard resolved.resolvingSymlinksInPath() == target.resolvingSymlinksInPath() else {
+            throw Failure("The managed desktop alias points somewhere else. It was left unchanged.")
+        }
         guard let image = NSImage(contentsOf: assets.appendingPathComponent("\(iconName(dark: dark)).png")) else {
             throw Failure("The approved icon resource is missing or unreadable.")
         }
-        guard NSWorkspace.shared.setIcon(image, forFile: target.path, options: []) else {
-            throw Failure("macOS could not change the Aside icon. Your account needs write permission for \(target.path). Install an account-owned copy in ~/Applications, then retry. No administrator or security bypass is performed.")
+        guard NSWorkspace.shared.setIcon(image, forFile: alias.path, options: []) else {
+            throw Failure("macOS could not change the desktop alias icon. Check Desktop folder permission or allow Desktop access in Privacy & Security. Aside.app was not customized.")
         }
         do {
             try verifySignature(target)
         } catch {
-            try state.original.restore(target: target)
-            throw Failure("Signature verification after icon customization failed; the original icon was restored. \(error.localizedDescription)")
+            throw Failure("Aside signature verification failed after alias customization. The alias operation will be rolled back; the app is never modified directly. \(error.localizedDescription)")
         }
     }
 
     func restore() throws {
         let state = try load()
         let target = URL(fileURLWithPath: state.target)
-        guard fm.fileExists(atPath: target.path) else {
-            throw Failure("Aside was moved or removed. Put it back at \(target.path), then retry uninstall. The backup was kept.")
+        let alias = URL(fileURLWithPath: state.alias)
+        if fm.fileExists(atPath: alias.path) {
+            let resolved = try URL(resolvingAliasFileAt: alias, options: [.withoutUI, .withoutMounting])
+            guard resolved.resolvingSymlinksInPath() == target.resolvingSymlinksInPath() else {
+                throw Failure("The managed alias now points elsewhere and was left unchanged. Restore its original target before uninstalling.")
+            }
+            try fm.removeItem(at: alias)
         }
-        try state.original.restore(target: target)
-        try verifySignature(target)
+        if fm.fileExists(atPath: target.path) { try verifySignature(target) }
     }
 }
 
@@ -219,8 +239,12 @@ func startAgent() throws {
 func installTransaction(source: URL, helper: URL, agent: URL, engine: IconEngine,
                         dark: Bool, isLoaded: () throws -> Bool, stop: () throws -> Void,
                         startNew: () throws -> Void, restartPrevious: () throws -> Void) throws {
-    let target = URL(fileURLWithPath: try engine.load().target)
-    let previousIcon = try OriginalIcon(target: target)
+    let state = try engine.load()
+    let target = URL(fileURLWithPath: state.target)
+    let alias = URL(fileURLWithPath: state.alias)
+    let previousAliasExists = fm.fileExists(atPath: alias.path)
+    let previousIcon = previousAliasExists ? try OriginalIcon(target: alias) : nil
+    let previousAliasData = previousAliasExists ? try Data(contentsOf: alias) : nil
     let previousAgent = fm.fileExists(atPath: agent.path) ? try Data(contentsOf: agent) : nil
     let previousLoaded = try isLoaded()
     let previousHelperExists = fm.fileExists(atPath: helper.path)
@@ -269,7 +293,17 @@ func installTransaction(source: URL, helper: URL, agent: URL, engine: IconEngine
                     try fm.removeItem(at: agent)
                 }
             }
-            if iconAttempted { attempt { try previousIcon.restore(target: target); try verifySignature(target) } }
+            if iconAttempted {
+                attempt {
+                    if let previousIcon = previousIcon, let previousAliasData = previousAliasData {
+                        try previousAliasData.write(to: alias, options: .atomic)
+                        try previousIcon.restore(target: alias)
+                    } else if fm.fileExists(atPath: alias.path) {
+                        try fm.removeItem(at: alias)
+                    }
+                    try verifySignature(target)
+                }
+            }
             if stoppedPrevious { attempt { try restartPrevious() } }
         }
         if rollbackErrors.isEmpty {
@@ -317,7 +351,7 @@ final class Installer: NSObject, NSApplicationDelegate {
         let heading = NSTextField(labelWithString: "A clean Aside icon, matched to your Mac.")
         heading.font = .boldSystemFont(ofSize: 21)
         stack.addArrangedSubview(heading)
-        let detail = NSTextField(wrappingLabelWithString: "Dark appearance → white icon. Light appearance → black icon.\n\nInstalls a helper for your account that starts at login. The original icon is backed up. Aside’s code and browser data are preserved.\n\nFinder/app icons switch automatically. A running or pinned Dock icon may stay cached; relaunching Aside may be necessary. Live Dock switching is not guaranteed.")
+        let detail = NSTextField(wrappingLabelWithString: "Dark appearance → white icon. Light appearance → black icon.\n\nCreates an Aside Clean Logo alias on your Desktop and installs a login helper for your account. Double-click the alias to open Aside.\n\nOnly this desktop alias changes. Aside.app and its running/pinned Dock icon stay unchanged to preserve its strict code signature. Browser data is preserved.")
         stack.addArrangedSubview(detail)
         status = NSTextField(wrappingLabelWithString: "")
         stack.addArrangedSubview(status)
@@ -372,7 +406,7 @@ final class Installer: NSObject, NSApplicationDelegate {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.allowedFileTypes = ["app"]
+        panel.allowedContentTypes = [.applicationBundle]
         panel.message = "Choose the installed Aside.app."
         if panel.runModal() == .OK { selected = panel.url; refreshStatus() }
     }
@@ -398,7 +432,7 @@ final class Installer: NSObject, NSApplicationDelegate {
                 try run("/bin/launchctl", ["bootstrap", domain, agentURL.path])
                 try run("/bin/launchctl", ["print", service])
             })
-            alert("Installed. Appearance is monitored for your account. Reopen this installer to restore the original icon.\n\nIf the Dock still shows an older icon, relaunch Aside when convenient. Automatic live Dock refresh is not guaranteed.")
+            alert("Installed. The Aside Clean Logo desktop alias follows your system appearance and opens Aside.\n\nAside.app and its Dock icon are preserved. Reopen this installer to remove the alias and login helper.")
         } catch { alert(error.localizedDescription + "\n\nAny original-icon backup is retained for Restore.", error: true) }
     }
 
@@ -413,7 +447,7 @@ final class Installer: NSObject, NSApplicationDelegate {
             try engine.restore()
             if fm.fileExists(atPath: agentURL.path) { try fm.removeItem(at: agentURL) }
             try fm.removeItem(at: support)
-            alert("The original icon was restored. The login helper and its backup were removed. Dock refresh may require relaunching Aside.")
+            alert("The managed desktop alias, login helper, and installation backup were removed. Aside.app and its Dock icon were preserved throughout.")
         } catch { alert(error.localizedDescription + "\n\nThe original-icon backup is retained until restoration succeeds.", error: true) }
     }
 
@@ -453,10 +487,15 @@ func testInstallFailures(fixture: URL, directory: URL) throws {
         let agent = testDirectory.appendingPathComponent("agent.plist")
         let upgrade = failure.hasPrefix("upgrade")
         let missingAssets = testDirectory.appendingPathComponent("missing-assets")
-        let engine = IconEngine(directory: testDirectory, assets: failure == "upgrade-apply" ? missingAssets : resources())
+        let alias = testDirectory.appendingPathComponent("Aside Test.alias")
+        let engine = IconEngine(directory: testDirectory, assets: failure == "upgrade-apply" ? missingAssets : resources(), aliasLocation: alias)
         try engine.prepare(fixture)
         let backup = try Data(contentsOf: engine.stateURL)
         let icon = try OriginalIcon(target: fixture)
+        if upgrade {
+            try IconEngine(directory: testDirectory, assets: resources(), aliasLocation: alias).apply(dark: true)
+        }
+        let oldAliasIcon = upgrade ? try OriginalIcon(target: alias) : nil
         let oldAgent = Data("previous launch agent".utf8)
         let oldMarker = helper.appendingPathComponent("previous-helper-marker")
         if upgrade {
@@ -490,10 +529,16 @@ func testInstallFailures(fixture: URL, directory: URL) throws {
         try require(fm.fileExists(atPath: helper.path) == upgrade, failure + " restores prior helper presence")
         try require(fm.fileExists(atPath: agent.path) == upgrade, failure + " restores prior agent presence")
         let restored = try OriginalIcon(target: fixture)
-        try require(restored == icon, failure + " restores the icon from before the attempt")
+        try require(restored == icon, failure + " leaves signed app metadata unchanged")
+        try require(fm.fileExists(atPath: alias.path) == upgrade, failure + " restores previous alias presence")
+        if let oldAliasIcon = oldAliasIcon {
+            let restoredAlias = try OriginalIcon(target: alias)
+            try require(restoredAlias == oldAliasIcon, failure + " restores previous alias metadata")
+        }
         let retainedBackup = try Data(contentsOf: engine.stateURL)
         try require(retainedBackup == backup, failure + " preserves first original backup")
         try verifySignature(fixture)
+        try engine.restore()
     }
     let readiness = directory.appendingPathComponent("readiness.json")
     let token = UUID().uuidString
@@ -521,42 +566,48 @@ func selfTest(fixture: URL, directory: URL) throws {
     try tracker.update(dark: false) { applied.append($0) }
     try require(applied == [false, true, false], "retry succeeds")
     let original = try OriginalIcon(target: fixture)
-    let engine = IconEngine(directory: directory, assets: resources())
+    let alias = directory.appendingPathComponent("Aside Test.alias")
+    let engine = IconEngine(directory: directory, assets: resources(), aliasLocation: alias)
     try engine.prepare(fixture)
     let backup = try Data(contentsOf: engine.stateURL)
     try engine.apply(dark: false)
     try verifySignature(fixture)
-    let lightMetadata = try readAttribute(fixture, "com.apple.FinderInfo")
-    try require(lightMetadata != original.finderInfo, "custom icon metadata was applied")
-    let iconFile = fixture.appendingPathComponent("Icon\r")
-    let lightIcon = try readAttribute(iconFile, "com.apple.ResourceFork")
+    let lightMetadata = try readAttribute(alias, "com.apple.FinderInfo")
+    try require(lightMetadata != nil, "custom icon metadata was applied to alias")
+    let resolved = try URL(resolvingAliasFileAt: alias, options: [.withoutUI, .withoutMounting])
+    try require(resolved.resolvingSymlinksInPath() == fixture.resolvingSymlinksInPath(), "alias opens the original application")
+    let lightIcon = try readAttribute(alias, "com.apple.ResourceFork")
     try engine.prepare(fixture)
     let repeatedBackup = try Data(contentsOf: engine.stateURL)
     try require(repeatedBackup == backup, "first backup is preserved")
     try engine.apply(dark: true)
     try verifySignature(fixture)
-    let darkIcon = try readAttribute(iconFile, "com.apple.ResourceFork")
+    let darkIcon = try readAttribute(alias, "com.apple.ResourceFork")
     try require(lightIcon != nil && darkIcon != nil && lightIcon != darkIcon, "dark and light apply distinct custom icon resources")
     try engine.restore()
     try verifySignature(fixture)
     let restored = try OriginalIcon(target: fixture)
-    try require(restored == original, "original icon metadata is restored exactly")
-    // Also preserve an existing custom icon, not only a fixture with no custom icon.
-    try fm.removeItem(at: engine.stateURL)
-    guard let existingImage = NSImage(contentsOf: resources().appendingPathComponent("white.png")),
-          NSWorkspace.shared.setIcon(existingImage, forFile: fixture.path, options: []) else {
-        throw Failure("TEST FAILED: seed existing custom icon")
-    }
-    let existing = try OriginalIcon(target: fixture)
-    try engine.prepare(fixture)
+    try require(restored == original, "signed application metadata is unchanged")
+    try require(!fm.fileExists(atPath: alias.path), "uninstall removes installer-owned alias")
+    try engine.apply(dark: true)
+    let existing = try OriginalIcon(target: alias)
     try engine.apply(dark: false)
+    try existing.restore(target: alias)
+    let existingRestored = try OriginalIcon(target: alias)
+    try require(existingRestored == existing, "prior custom alias icon is restored exactly")
     try engine.restore()
-    let existingRestored = try OriginalIcon(target: fixture)
-    try require(existingRestored == existing, "pre-existing custom icon is restored exactly")
-    try original.restore(target: fixture)
+    let collision = directory.appendingPathComponent("existing.alias")
+    let collisionData = Data("existing desktop file".utf8)
+    try collisionData.write(to: collision)
+    var refusedCollision = false
+    do {
+        try IconEngine(directory: directory.appendingPathComponent("collision-state"), assets: resources(), aliasLocation: collision).prepare(fixture)
+    } catch { refusedCollision = true }
+    let preservedCollision = try Data(contentsOf: collision)
+    try require(refusedCollision && preservedCollision == collisionData, "existing desktop files are not overwritten")
     try verifySignature(fixture)
     try testInstallFailures(fixture: fixture, directory: directory.appendingPathComponent("transactions"))
-    print("PASS: theme mapping, watcher transitions/retry, custom icon apply/restore, first-backup preservation, signed fixture integrity")
+    print("PASS: theme mapping, watcher transitions/retry, desktop alias resolution/icon switching/removal, backup preservation, strict signed fixture integrity")
 }
 
 let app = NSApplication.shared

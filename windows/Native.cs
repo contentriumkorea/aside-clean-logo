@@ -21,7 +21,7 @@ namespace AsideCleanLogo {
   [DllImport("user32.dll")] static extern IntPtr GetClassLongPtr(IntPtr h,int index);
   [DllImport("kernel32.dll",CharSet=CharSet.Unicode,SetLastError=true)] public static extern bool MoveFileEx(string oldPath,string newPath,uint flags);
   public static IntPtr GetIcon(IntPtr h,int type) {IntPtr result;SendMessageTimeout(h,0x7F,(IntPtr)type,IntPtr.Zero,2,500,out result);return result;}
-  public static bool SetIcon(IntPtr h,int type,IntPtr icon) {IntPtr result;return SendMessageTimeout(h,0x80,(IntPtr)type,icon,2,500,out result)!=IntPtr.Zero && GetIcon(h,type)==icon;}
+  public static bool SetIcon(IntPtr h,int type,IntPtr icon) {IntPtr result;if(SendMessageTimeout(h,0x7F,(IntPtr)type,IntPtr.Zero,2,500,out result)!=IntPtr.Zero&&result==icon)return true;return SendMessageTimeout(h,0x80,(IntPtr)type,icon,2,500,out result)!=IntPtr.Zero && GetIcon(h,type)==icon;}
   public static List<IntPtr> Windows(string exe) {
    var pids=new HashSet<uint>();
    foreach(var p in Process.GetProcessesByName("Aside"))try {if(String.Equals(p.MainModule.FileName,exe,StringComparison.OrdinalIgnoreCase))pids.Add((uint)p.Id);}catch {}finally {p.Dispose();}

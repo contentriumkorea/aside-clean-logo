@@ -19,6 +19,9 @@ jobs:
       - name: Build and test Windows installer
         shell: powershell
         run: ./windows/build.ps1
+      - name: Install, switch theme, repair and uninstall on disposable runner
+        shell: powershell
+        run: ./windows/integration-test.ps1
       - uses: actions/upload-artifact@v4
         with:
           name: windows-installer
