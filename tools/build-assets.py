@@ -1,7 +1,7 @@
 """Render the official vector, inset only hole boundaries, and lock the star.
 
 No generative model or curve fitting is used. The source Bezier coordinates are
-immutable. A 0.18-unit inset equals about six pixels at 1024px; the outside
+immutable. A 0.28-unit inset equals about nine pixels at 1024px; the outside
 silhouette and the central star retain the original vector geometry.
 """
 import hashlib
@@ -20,7 +20,7 @@ PATH = SOURCE['path']
 assert hashlib.sha256(PATH.encode()).hexdigest() == SOURCE['path_sha256']
 VIEW = ' '.join(str(v) for v in SOURCE['view_box'])
 HOLES = ''.join(part + 'Z' for part in PATH.split('Z')[1:] if part.strip())
-INSET = 0.18
+INSET = 0.28
 
 # Original star boundary segments. The straight connectors lie inside the
 # original black intersections, so they do not introduce a new visible edge.

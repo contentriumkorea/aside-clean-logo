@@ -11,11 +11,11 @@ comes from the 256-pixel icon's rasterization; this is not a claim of byte-ident
 PNG exports. The original official vector, rather than an AI reconstruction,
 is the editable master.
 
-Only internal cutout edges are inset, by 0.18 vector units (about six pixels at
+Only internal cutout edges are inset, by 0.28 vector units (about nine pixels at
 1024px). The exterior path is unchanged. The central star's original boundary
 segments form a protection mask. During raster export its fully protected pixels
 are copied from the original alpha channel, and alpha is clamped to never add
-pixels outside the original. The current alpha area decreases by 6.932 percent;
+pixels outside the original. The current alpha area decreases by 10.856 percent;
 this area measure is not a universal stroke-width percentage.
 
 Black and white share the same alpha channel. Native ICOs use DIB/BMP frames at

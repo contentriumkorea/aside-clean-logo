@@ -2,7 +2,7 @@
 
 Clean, transparent black/white icons for the Aside desktop browser. **Dark appearance → white. Light appearance → black.** The central sparkle stays bold while the circular and curved lines are thinner.
 
-The artwork uses the original vector paths from [Aside's official website](https://aside.com/), with no AI redrawing. The original Bezier coordinates and outer silhouette are retained. Internal boundaries are inset by 0.18 vector units, and the central sparkle's protected pixels are copied exactly from the original rendering. These invariants are tested.
+The artwork uses the original vector paths from [Aside's official website](https://aside.com/), with no AI redrawing. The original Bezier coordinates and outer silhouette are retained. Internal boundaries are inset by 0.28 vector units, and the central sparkle's protected pixels are copied exactly from the original rendering. These invariants are tested. The icon fills its frame with less than 2% transparent margin on each side while preserving its original proportions.
 
 ![Black and white icon previews](assets/preview.png)
 
