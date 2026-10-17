@@ -95,6 +95,23 @@ struct OriginalIcon: Codable, Equatable {
     }
 }
 
+func iconDifference(_ expected: OriginalIcon, _ actual: OriginalIcon) -> String {
+    var differences: [String] = []
+    if expected.iconFileExists != actual.iconFileExists { differences.append("iconFileExists") }
+    let fields: [(String, Data?, Data?)] = [
+        ("finderInfo", expected.finderInfo, actual.finderInfo),
+        ("resourceFork", expected.resourceFork, actual.resourceFork),
+        ("iconData", expected.iconData, actual.iconData),
+        ("iconFinderInfo", expected.iconFinderInfo, actual.iconFinderInfo),
+        ("iconResourceFork", expected.iconResourceFork, actual.iconResourceFork)
+    ]
+    for (name, before, after) in fields where before != after {
+        let offset = zip(before ?? Data(), after ?? Data()).enumerated().first { $0.element.0 != $0.element.1 }?.offset
+        differences.append("\(name): expected \(before.map { String($0.count) } ?? "absent") bytes, actual \(after.map { String($0.count) } ?? "absent") bytes, first differing byte \(offset.map { String($0) } ?? "length/presence")")
+    }
+    return differences.joined(separator: "; ")
+}
+
 struct Installation: Codable {
     let target: String
     let alias: String
@@ -244,19 +261,28 @@ func installTransaction(source: URL, helper: URL, agent: URL, engine: IconEngine
     let alias = URL(fileURLWithPath: state.alias)
     let previousAliasExists = fm.fileExists(atPath: alias.path)
     let previousIcon = previousAliasExists ? try OriginalIcon(target: alias) : nil
-    let previousAliasData = previousAliasExists ? try Data(contentsOf: alias) : nil
     let previousAgent = fm.fileExists(atPath: agent.path) ? try Data(contentsOf: agent) : nil
     let previousLoaded = try isLoaded()
     let previousHelperExists = fm.fileExists(atPath: helper.path)
     let transaction = engine.directory.appendingPathComponent("transaction-" + UUID().uuidString)
     let staged = transaction.appendingPathComponent("staged.app")
     let previous = transaction.appendingPathComponent("previous.app")
+    let previousAlias = transaction.appendingPathComponent("previous.alias")
     try fm.createDirectory(at: transaction, withIntermediateDirectories: true)
     var stoppedPrevious = false
     var replacedHelper = false
     var iconAttempted = false
     var startAttempted = false
     do {
+        if let previousIcon = previousIcon {
+            // Copy the complete alias, including all forks and attributes. Rebuilding
+            // its data fork atomically before setIcon(nil) can normalize alias metadata.
+            try fm.copyItem(at: alias, to: previousAlias)
+            let saved = try OriginalIcon(target: previousAlias)
+            guard saved == previousIcon else {
+                throw Failure("Alias backup was not exact: " + iconDifference(previousIcon, saved))
+            }
+        }
         try fm.copyItem(at: source, to: staged)
         try verifySignature(staged)
         if previousLoaded { try stop(); stoppedPrevious = true }
@@ -295,9 +321,13 @@ func installTransaction(source: URL, helper: URL, agent: URL, engine: IconEngine
             }
             if iconAttempted {
                 attempt {
-                    if let previousIcon = previousIcon, let previousAliasData = previousAliasData {
-                        try previousAliasData.write(to: alias, options: .atomic)
-                        try previousIcon.restore(target: alias)
+                    if let previousIcon = previousIcon {
+                        if fm.fileExists(atPath: alias.path) { try fm.removeItem(at: alias) }
+                        try fm.copyItem(at: previousAlias, to: alias)
+                        let restored = try OriginalIcon(target: alias)
+                        guard restored == previousIcon else {
+                            throw Failure("Alias rollback was not exact: " + iconDifference(previousIcon, restored))
+                        }
                     } else if fm.fileExists(atPath: alias.path) {
                         try fm.removeItem(at: alias)
                     }
@@ -533,7 +563,7 @@ func testInstallFailures(fixture: URL, directory: URL) throws {
         try require(fm.fileExists(atPath: alias.path) == upgrade, failure + " restores previous alias presence")
         if let oldAliasIcon = oldAliasIcon {
             let restoredAlias = try OriginalIcon(target: alias)
-            try require(restoredAlias == oldAliasIcon, failure + " restores previous alias metadata")
+            try require(restoredAlias == oldAliasIcon, failure + " restores previous alias metadata: " + iconDifference(oldAliasIcon, restoredAlias))
         }
         let retainedBackup = try Data(contentsOf: engine.stateURL)
         try require(retainedBackup == backup, failure + " preserves first original backup")
@@ -594,7 +624,7 @@ func selfTest(fixture: URL, directory: URL) throws {
     try engine.apply(dark: false)
     try existing.restore(target: alias)
     let existingRestored = try OriginalIcon(target: alias)
-    try require(existingRestored == existing, "prior custom alias icon is restored exactly")
+    try require(existingRestored == existing, "prior custom alias icon is restored exactly: " + iconDifference(existing, existingRestored))
     try engine.restore()
     let collision = directory.appendingPathComponent("existing.alias")
     let collisionData = Data("existing desktop file".utf8)
