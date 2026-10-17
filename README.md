@@ -1,0 +1,42 @@
+# Aside Clean Logo
+
+Clean, transparent black/white icons for the Aside desktop browser. **Dark appearance → white. Light appearance → black.** The central sparkle stays bold while the circular and curved lines are thinner.
+
+![Black and white icon previews](assets/preview.png)
+
+[![Install for Windows](https://img.shields.io/badge/Windows-Download_Setup-0078D4?style=for-the-badge&logo=windows)](https://github.com/contentriumkorea/aside-clean-logo/releases/latest/download/Aside-Clean-Logo-Windows-Setup.exe)
+[![Install for macOS](https://img.shields.io/badge/macOS-Download_Installer-222222?style=for-the-badge&logo=apple)](https://github.com/contentriumkorea/aside-clean-logo/releases/latest/download/Aside-Clean-Logo-macOS.dmg)
+
+## Windows
+
+1. Install Aside first. Download and open **Aside-Clean-Logo-Windows-Setup.exe**.
+2. Approve Windows administrator access, then press **Install**.
+
+The helper follows the **Windows system appearance**, including custom mode's taskbar setting. It updates desktop, Start menu, pinned taskbar shortcuts and running Aside window icons. It starts at sign-in, backs up original shortcuts, and leaves the browser executable and profile untouched. Use the same administrator account that you normally use for Aside; entering credentials for a different account installs for that account.
+
+Remove through **Settings → Apps → Aside Clean Logo** to restore the original icons. See [Windows details](windows/README.md) for diagnostics and build commands.
+
+## macOS
+
+1. Install Aside first. Download and open **Aside-Clean-Logo-macOS.dmg**.
+2. Open **Aside Clean Logo**, select Aside.app if needed, and press **Install**.
+
+The helper switches the Finder/application custom icon with system appearance and starts at sign-in. The installed browser needs to be writable by your account. It preserves the original icon metadata and browser code signature. Open the utility again to restore and uninstall.
+
+**Dock limitation:** macOS can cache the icon of a pinned or running application. The Dock may require quitting and reopening Aside to show the new icon; live Dock changes are not guaranteed. The utility does not restart Aside or the Dock. This release is ad-hoc signed, not Apple-notarized; macOS may require approval through its normal security interface. See [macOS details](macos/README.txt).
+
+## 한국어
+
+- **윈도우:** 설치 파일 실행 → 관리자 승인 → **Install**. 다크 모드는 흰색, 밝은 모드는 검정 로고로 자동 전환합니다. 삭제하면 원래 아이콘을 복원합니다.
+- **맥:** DMG 열기 → 앱 실행 → **Install**. Finder/앱 아이콘을 자동 전환합니다. 실행 중인 Dock 아이콘은 macOS 캐시 때문에 Aside를 다시 열어야 반영될 수 있습니다.
+- 브라우저 본체·로그인·북마크 등 사용자 데이터는 변경하지 않습니다.
+
+## Build and verification
+
+- Windows: `powershell -NoProfile -File windows/build.ps1`
+- macOS: `bash macos/build.sh` (universal Apple Silicon + Intel, macOS 12+)
+- Shared assets: `python -m pip install Pillow==10.4.0` then `python -m unittest discover -s tests -v`
+
+GitHub Actions builds native installers and runs disposable fixtures on both platforms. Release checksums are supplied as `SHA256SUMS.txt`. Native macOS fixture tests do not replace real Aside/Dock testing on a Mac.
+
+Unofficial customization tool. Aside's name and logo belong to their respective owners; this project is not affiliated with Aside. Source code is MIT licensed; brand assets are excluded from that license.

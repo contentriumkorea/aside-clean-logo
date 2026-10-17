@@ -1,0 +1,23 @@
+# Windows implementation
+
+Run `powershell -NoProfile -ExecutionPolicy Bypass -File windows/build.ps1` from the repository root. The build compiles and runs an unelevated disposable shortcut test executable, validates both embedded icons through the Windows Shell, then creates `dist/Aside-Clean-Logo-Windows-Setup.exe`. Requires 64-bit Windows and the .NET Framework 4.8 compiler; no package dependencies.
+
+Opening Setup shows a single Install button. Setup requires administrator approval once. The helper and its backups live under `%ProgramFiles%\Aside Clean Logo`; the scheduled task runs interactively at highest privilege for the installing administrator account. No permissions are weakened, and the helper refuses writable, reparse-point, or untrusted-owner installation paths. The product does not change `Aside.exe`, browser data, or browser settings.
+
+Command line:
+
+- `--install`: apply and back up all matching shortcuts, register/start the watcher, and wait for its readiness (20 seconds maximum).
+- `--uninstall`: stop the watcher, restore original shortcuts and native running-window class icons, and remove this product's task and known files. Missing shortcuts are left missing; a retargeted shortcut stops removal so its owner's change is preserved. When invoked from the installed executable itself, its deletion may finish at the next Windows restart; an external Setup can remove it immediately.
+- `--status`: print the protected `status.json`; exit 2 when no status exists.
+- `--self-test`: disposable actual Shell-link tests and embedded icon extraction tests; never changes the real browser installation. The distributed Setup's elevation manifest still applies; the build runs equivalent tests without elevation.
+- `--watch`: internal scheduled-task entry point; refuses to run outside its protected installed path.
+
+Exit codes: 0 success; 1 failure; 2 missing browser, target shortcut, or status. The protected `last-error.txt` records command errors if installation has created its folder. Runtime `status.json` includes `Ready`, `Color`, `Icon`, `Shortcuts`, `Windows`, `VerifiedWindows`, `VerifiedRelaunchIcons`, `Errors`, `ProcessId`, and `UpdatedAt`.
+
+`SystemUsesLightTheme=0` selects white; all other values select black. The watcher checks every 1.5 seconds, catches newly opened browser windows and new shortcuts, and sends Shell refresh notifications. Existing first backups survive reinstallation. If the earlier per-user `AsideIconTheme` prototype's backup index exists, matching original shortcuts are imported before first modification. The installer does not stop or delete that separate prototype; retire it after this product verifies successfully.
+
+Chromium profile windows can override their taskbar icon with `System.AppUserModel.RelaunchIconResource`. The watcher updates this property for windows with an explicit AppUserModelID and preserves its first original value in protected `windows.json`. Restoring a profile-specific original validates the window handle, process ID, process start time, AppUserModelID, and relaunch command. If the profile identity changed while an exact product icon resource remains, restoration clears that resource to use native fallback before deleting the icon asset; later unrelated property changes are preserved. Product resources are never captured as a new profile's original. Closing a browser window naturally discards its window properties. `inspect-windows.ps1 -AsideExecutable <path>` can inspect these properties without changing them.
+
+Use the same administrator account to install and remove. An over-the-shoulder UAC prompt using another account applies to that administrator's profile; it cannot manage the standard user's taskbar or theme. Windows can retain cached taskbar/desktop imagery briefly; a running Chromium window may also override its icon between watcher ticks. Actual Windows Shell extraction and acknowledged `WM_SETICON` updates are verified, but a desktop screenshot remains the check for visible cache behavior. No automatic Explorer restart or forced repinning is performed.
+
+Tests cover system appearance mapping, actual `.lnk` modification, byte-exact restoration, first-backup preservation, registration-failure rollback, locked/missing targets, changed targets, allowed directory boundaries, CLI exclusion, and both embedded icons through native Shell extraction. A real administrator install/uninstall and actual taskbar rendering require a Windows desktop session and are separate from disposable tests.
