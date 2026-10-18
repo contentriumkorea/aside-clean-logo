@@ -306,7 +306,19 @@ final class DockProbe: NSObject, NSApplicationDelegate {
                 timer.invalidate()
                 self.staticLaunchCount += 1
                 self.launch(config)
-            } else if Date() > deadline { timer.invalidate(); self.fail(ProbeError("Owned Aside did not finish quitting")) }
+            } else if Date() > deadline {
+                timer.invalidate()
+                // Only the probe-created browser with an empty temporary profile
+                // may be force-closed. The distributed installer never does this.
+                guard ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true",
+                      ProcessInfo.processInfo.environment["ASIDE_PROBE_PROFILE"] != nil,
+                      previous.forceTerminate() else { self.fail(ProbeError("Owned Aside did not finish quitting")); return }
+                self.schedule(2) {
+                    guard previous.isTerminated else { self.fail(ProbeError("Owned test browser remained alive")); return }
+                    self.staticLaunchCount += 1
+                    self.launch(config)
+                }
+            }
         }
     }
 
