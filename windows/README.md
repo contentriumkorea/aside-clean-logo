@@ -1,5 +1,7 @@
 # Windows implementation
 
+Current delivery: `Aside-Logo-Apply.exe` and `Aside-Logo-Restore.exe`. Both use the existing tested engine directly and exit without a setup or completion dialog. Errors are shown; `--quiet` suppresses the error dialog for automated integration tests. Apply retains the protected helper and sign-in task needed for running window/taskbar icons and theme changes, but omits/removes the Installed Apps entry. Restore removes all owned helper state and is harmless when already restored. The older Setup build remains only for migration tests and existing CLI compatibility; it is no longer a current release download.
+
 Run `powershell -NoProfile -ExecutionPolicy Bypass -File windows/build.ps1` from the repository root. The build compiles and runs an unelevated disposable shortcut test executable, validates both embedded icons through the Windows Shell, then creates `dist/Aside-Clean-Logo-Windows-Setup.exe`. Requires 64-bit Windows and the .NET Framework 4.8 compiler; no package dependencies.
 
 Opening Setup shows a single Install button. Setup requires administrator approval once. The helper and its backups live under `%ProgramFiles%\Aside Clean Logo`; the scheduled task runs interactively at highest privilege for the installing administrator account. No permissions are weakened, and the helper refuses writable, reparse-point, or untrusted-owner installation paths. The product does not change `Aside.exe`, browser data, or browser settings.

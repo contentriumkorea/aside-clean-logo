@@ -152,7 +152,7 @@ namespace AsideCleanLogo {
     store.ImportOriginal(path,backup);
    }
   }
-  public static void Install() {
+  public static void Install(bool listInPrograms = true) {
    Admin();CheckProtected();CheckAssets();
    string[] all=AllLinks();string exe=FindAside(all);string[] links=Matching(all,exe);
    if(links.Length==0)throw new FileNotFoundException("No Aside shortcuts were found. Create a desktop or Start menu shortcut first.");
@@ -173,7 +173,11 @@ namespace AsideCleanLogo {
       Thread.Sleep(200);string status=Path.Combine(Home,"status.json");if(!File.Exists(status))continue;
       var s=Json.Deserialize<Dictionary<string,object>>(File.ReadAllText(status));
       if(s.ContainsKey("Errors") && ((System.Collections.IEnumerable)s["Errors"]).Cast<object>().Any())throw new IOException("Watcher reported errors: "+File.ReadAllText(status));
-      if(s.ContainsKey("Ready") && (bool)s["Ready"]){RegisterUninstall();return;}
+      if(s.ContainsKey("Ready") && (bool)s["Ready"]){
+       if(listInPrograms)RegisterUninstall();
+       else Registry.LocalMachine.DeleteSubKeyTree("Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\AsideCleanLogo",false);
+       return;
+      }
      }
      throw new IOException("Scheduled watcher did not report readiness within 20 seconds.");
      } catch {StopWatch();throw;}

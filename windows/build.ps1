@@ -16,6 +16,14 @@ try {
     & $compiler /nologo /target:winexe /platform:x64 /optimize+ @references @resources /win32manifest:app.manifest /win32icon:..\assets\black.ico "/out:$artifact" Core.cs CoreTests.cs Native.cs WindowProperties.cs WindowStore.cs Program.cs
     if ($LASTEXITCODE -ne 0) { throw 'Installer build failed.' }
     Write-Output "Built $artifact"
+    foreach ($action in @('Apply', 'Restore')) {
+        $oneClick = Join-Path $output "Aside-Logo-$action.exe"
+        $defines = @()
+        if ($action -eq 'Restore') { $defines = @('/define:RESTORE_LOGO') }
+        & $compiler /nologo /codepage:65001 /target:winexe /platform:x64 /optimize+ @references @resources @defines /main:AsideCleanLogo.OneClickMain /win32manifest:app.manifest /win32icon:..\assets\black.ico "/out:$oneClick" Core.cs Native.cs WindowProperties.cs WindowStore.cs Program.cs CoreTests.cs OneClickMain.cs
+        if ($LASTEXITCODE -ne 0) { throw "One-click $action build failed." }
+        Write-Output "Built $oneClick"
+    }
 } finally {
     if (Test-Path -LiteralPath .\Tests.exe) { Remove-Item -LiteralPath .\Tests.exe }
     Pop-Location

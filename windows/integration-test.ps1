@@ -1,3 +1,4 @@
+param([switch]$OneClick)
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'Run this disposable install/uninstall test only on a clean GitHub Actions Windows runner.' }
 if (!(New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'The runner must be elevated.' }
@@ -12,7 +13,14 @@ $themeKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize'
 $oldTheme = Get-ItemProperty -LiteralPath $themeKey -Name SystemUsesLightTheme -ErrorAction SilentlyContinue
 $taskName = 'AsideCleanLogo-' + [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
 function Invoke-Setup([string]$mode) {
-    $process = Start-Process -FilePath $setup -ArgumentList $mode -Wait -PassThru
+    $executable = $setup
+    $arguments = $mode
+    if ($OneClick) {
+        $action = if ($mode -eq '--uninstall') { 'Restore' } else { 'Apply' }
+        $executable = Join-Path (Split-Path -Parent $setup) "Aside-Logo-$action.exe"
+        $arguments = '--quiet'
+    }
+    $process = Start-Process -FilePath $executable -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
     if ($process.ExitCode -ne 0) {
         if (Test-Path -LiteralPath "$installHome\last-error.txt") { Get-Content -LiteralPath "$installHome\last-error.txt" }
         throw "Setup $mode failed with exit $($process.ExitCode)"
@@ -40,8 +48,14 @@ try {
     $link.IconLocation = "$fakeAside,0"
     $link.Save()
     $original = (Get-FileHash -LiteralPath $shortcut -Algorithm SHA256).Hash
+    if ($OneClick) {
+        $legacy = Start-Process -FilePath $setup -ArgumentList '--install' -WindowStyle Hidden -Wait -PassThru
+        if ($legacy.ExitCode -ne 0) { throw 'Could not prepare existing installer migration fixture' }
+        if (!(Test-Path -LiteralPath 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AsideCleanLogo')) { throw 'Migration fixture was not registered' }
+    }
     Invoke-Setup '--install'
     if (!(Get-ScheduledTask -TaskName $taskName -ErrorAction Stop)) { throw 'Login task missing' }
+    if ($OneClick -and (Test-Path -LiteralPath 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AsideCleanLogo')) { throw 'One-click action unexpectedly registered an installed program' }
     New-Item -Path $themeKey -Force | Out-Null
     Set-ItemProperty -LiteralPath $themeKey -Name SystemUsesLightTheme -Value 0
     Assert-Color 'white'
@@ -56,7 +70,14 @@ try {
     if ((Get-FileHash -LiteralPath $fakeAside -Algorithm SHA256).Hash -ne $browserHash) { throw 'Browser binary was modified' }
     if (Test-Path -LiteralPath $installHome) { throw 'Product files remain after external uninstall' }
     if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) { throw 'Login task remains after uninstall' }
-    Write-Output 'PASS: real elevated install, scheduled startup, light/dark transitions, reinstall, byte-exact restore and clean uninstall'
+    if ($OneClick) {
+        Invoke-Setup '--install'
+        if (Test-Path -LiteralPath 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\AsideCleanLogo') { throw 'Fresh one-click apply registered a program' }
+        Invoke-Setup '--uninstall'
+        Invoke-Setup '--uninstall'
+        if ((Get-FileHash -LiteralPath $shortcut -Algorithm SHA256).Hash -ne $original -or (Test-Path -LiteralPath $installHome) -or (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue)) { throw 'Repeat apply/restore did not finish cleanly' }
+        Write-Output 'PASS: one-click migration and fresh apply, no installed-program entry, theme/window helper, repeat apply, byte-exact restore, repeat restore and complete helper removal'
+    } else { Write-Output 'PASS: real elevated install, scheduled startup, light/dark transitions, reinstall, byte-exact restore and clean uninstall' }
 } finally {
     if ($oldTheme -and $oldTheme.PSObject.Properties['SystemUsesLightTheme']) { Set-ItemProperty -LiteralPath $themeKey -Name SystemUsesLightTheme -Value $oldTheme.SystemUsesLightTheme }
     elseif (Test-Path -LiteralPath $themeKey) { Remove-ItemProperty -LiteralPath $themeKey -Name SystemUsesLightTheme -ErrorAction SilentlyContinue }
