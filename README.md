@@ -1,34 +1,51 @@
+![Aside Clean Logo — Windows용 원클릭 로고 변경·복원 도구. 다크 모드에서는 화이트, 밝은 모드에서는 블랙 로고를 사용합니다.](assets/cover.png)
+
 # Aside Clean Logo
 
-Windows용 Aside 로고 원클릭 변경·복원 도구입니다. 설치 화면 없이 실행하면 적용됩니다.
+**어사이드 아이콘을 더 깔끔하게. 변경도, 원복도 한 번 실행으로.**
 
-![Black and white icon previews](assets/preview.png)
+Windows의 바탕화면과 작업표시줄에 테두리 없는 로고를 적용합니다. 다크·라이트 모드에 맞춰 색상을 바꾸고, 언제든 원래 로고로 돌아갈 수 있습니다.
 
-**[로고 변경 — Aside-Logo-Apply.exe](https://github.com/contentriumkorea/aside-clean-logo/releases/latest/download/Aside-Logo-Apply.exe)**
+[![최신 정식 버전](https://img.shields.io/github/v/release/contentriumkorea/aside-clean-logo?style=flat-square&label=Release&color=1768bd)](https://github.com/contentriumkorea/aside-clean-logo/releases/latest) ![Windows 64비트](https://img.shields.io/badge/Windows-x64-1768bd?style=flat-square) [![소스 코드 라이선스: MIT](https://img.shields.io/badge/Code-MIT-536877?style=flat-square)](LICENSE)
 
-**[원래 로고 복원 — Aside-Logo-Restore.exe](https://github.com/contentriumkorea/aside-clean-logo/releases/latest/download/Aside-Logo-Restore.exe)**
+<p>
+  <a href="https://github.com/contentriumkorea/aside-clean-logo/releases/latest/download/Aside-Logo-Apply.exe"><img src="assets/download-apply.png" alt="로고 변경 다운로드 — Aside-Logo-Apply.exe" width="270"></a>
+  <a href="https://github.com/contentriumkorea/aside-clean-logo/releases/latest/download/Aside-Logo-Restore.exe"><img src="assets/download-restore.png" alt="원래 로고로 복원 — Aside-Logo-Restore.exe" width="270"></a>
+</p>
 
-1. Aside가 설치된 Windows PC에서 **로고 변경** 파일을 실행하고 관리자 승인을 합니다.
-2. 바탕화면·시작 메뉴·고정 작업표시줄·실행 중인 Aside 창의 아이콘을 변경합니다. 다크 모드에는 화이트, 밝은 모드에는 블랙을 사용합니다.
-3. 되돌리려면 **원래 로고 복원** 파일을 실행합니다. 원래 아이콘을 복원하고 도우미·자동 실행·아이콘 파일을 제거합니다.
+**Windows 64비트 · Aside 설치 필요 · 관리자 승인 필요**
 
-설치 마법사, 설치 버튼, 완료 확인창, 앱 목록 등록은 없습니다. 로고가 Aside 재실행과 Windows 로그인 후에도 유지되고 테마에 맞게 전환되도록 작은 백그라운드 도우미와 로그인 작업은 사용합니다. 아이콘 파일과 원본 백업은 `%ProgramFiles%\Aside Clean Logo`에 보관하므로 다운로드한 EXE를 옮겨도 아이콘 경로가 깨지지 않습니다. 기존 Setup 버전을 사용 중이어도 변경 파일을 바로 실행할 수 있으며 최초 원본 백업을 유지합니다.
+설치 마법사와 완료 확인창 없이 작동합니다. [릴리스와 파일 검증 정보](https://github.com/contentriumkorea/aside-clean-logo/releases/latest)
 
-Aside 실행 파일과 로그인·북마크·방문 기록은 변경하지 않습니다. 평소 Aside를 사용하는 동일한 관리자 계정으로 실행하세요. 다른 관리자 계정의 자격 증명을 입력하면 그 계정에 적용됩니다.
+## 깔끔하게 바꾸고, 간단하게 되돌리세요
 
-맥 버전은 사용자 요청에 따라 배포를 취소했습니다. 현재 배포는 Windows 전용입니다.
+| 기능 | 동작 |
+| --- | --- |
+| 원클릭 변경 | 바탕화면·시작 메뉴·고정 작업표시줄·실행 중인 Aside 창의 아이콘을 변경합니다. |
+| 테마 자동 전환 | 다크 모드에는 화이트, 밝은 모드에는 블랙 로고를 사용합니다. |
+| 원래 로고 복원 | 최초 원본 백업으로 복원하고 이 도구의 도우미와 자동 실행을 제거합니다. |
+| 익숙한 Aside 그대로 | 로고의 원래 형태를 유지하며, 브라우저 본체와 로그인·북마크·방문 기록을 변경하지 않습니다. |
 
-The two Windows executables apply and restore the approved logo without a setup wizard or an Installed Apps entry. A protected background helper keeps running taskbar icons and light/dark switching consistent; Restore removes it. The original browser binary and profile are untouched. `SHA256SUMS.txt` verifies both downloads.
+## 작업표시줄에서 이렇게 보입니다
 
-The artwork preserves the original vector paths from [Aside's official website](https://aside.com/). The circular and curved lines use the approved 0.28-unit inset; the central sparkle remains unchanged. No AI redrawing is used. The black and white assets have identical geometry and less than 2% transparent margin per side.
+![어두운 작업표시줄 위에 표시한 화이트 Aside 로고의 디자인 미리보기](assets/taskbar-preview.png)
 
-## Build and verification
+*고해상도로 재구성한 디자인 미리보기입니다. 실제 화면 캡처가 아니며, 크기와 배경은 Windows 설정에 따라 달라집니다.*
 
-- Windows: `powershell -NoProfile -File windows/build.ps1`
-- Asset checks: `python -m unittest discover -s tests -v`
-- Rebuild artwork: `npm ci --ignore-scripts` then `python tools/build-assets.py`
-- CI checks fresh apply, migration from the former Setup, theme switching, repeat apply, original shortcut restoration and complete removal on a disposable Windows runner.
+## 사용 방법
 
-See [Windows technical details](windows/README.md). Earlier macOS investigations are retained as research and are not distributed.
+1. 위의 **로고 변경 다운로드**에서 파일을 받아 실행합니다.
+2. Windows 관리자 승인창에서 승인하면 자동으로 적용됩니다.
+3. 되돌릴 때는 **원래 로고로 복원** 파일을 실행합니다.
 
-Unofficial customization tool. Aside's name and logo belong to their respective owners. Source code is MIT licensed; brand assets are excluded from that license.
+테마 전환과 Aside 재실행 후에도 로고를 유지하도록 작은 도우미가 백그라운드와 로그인 시에 동작합니다. **원복하면 함께 제거됩니다.** 앱 목록에는 별도 프로그램을 등록하지 않습니다.
+
+평소 Aside를 사용하는 동일한 관리자 계정으로 실행하세요. .NET Framework 4.8이 필요합니다. 기존 Setup 버전을 쓰고 있어도 원클릭 변경 파일로 전환할 수 있습니다.
+
+[자세한 사용법·문제 해결](docs/usage.md) · [로고 제작 기준](docs/artwork.md) · [개발·검증 문서](windows/README.md)
+
+---
+
+콘텐츠리움이 제작한 비공식 Windows 사용자화 도구입니다. Aside와 제휴한 제품은 아닙니다. Aside를 비롯한 표시된 브랜드의 이름과 로고는 각 권리자에게 있으며, 소스 코드에만 [MIT 라이선스](LICENSE)가 적용됩니다.
+
+<a href="https://contentrium.com/"><img src="assets/contentrium-home.png" alt="콘텐츠리움 홈페이지" width="270"></a>
