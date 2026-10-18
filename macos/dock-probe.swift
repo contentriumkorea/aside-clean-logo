@@ -6,6 +6,7 @@ import CryptoKit
 import Darwin
 
 let fm = FileManager.default
+var probeOutputDirectory: URL?
 
 struct ProbeError: LocalizedError {
     let message: String
@@ -26,8 +27,31 @@ func command(_ executable: String, _ args: [String]) throws -> CommandResult {
     p.standardOutput = pipe
     p.standardError = pipe
     try p.run()
+    let label = URL(fileURLWithPath: executable).lastPathComponent
+    let seconds: TimeInterval = label == "node" || label.hasPrefix("Node-") ? 45 : 90
+    let lock = NSLock()
+    var expired = false
+    let diagnosticDirectory = probeOutputDirectory
+    let deadline = DispatchWorkItem {
+        if p.isRunning {
+            lock.lock(); expired = true; lock.unlock()
+            if let directory = diagnosticDirectory {
+                let capture = Process()
+                capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+                capture.arguments = ["-x", directory.appendingPathComponent("timeout-" + label + "-screen.png").path]
+                try? capture.run()
+                capture.waitUntilExit()
+                try? Data("Timed out after \(seconds)s: \(label). Only the owned diagnostic child was terminated. Keychain approval may need user action; no permission dialog was automated.\n".utf8).write(to: directory.appendingPathComponent("timeout-" + label + ".txt"))
+            }
+            p.terminate()
+        }
+    }
+    DispatchQueue.global().asyncAfter(deadline: .now() + seconds, execute: deadline)
     let data = pipe.fileHandleForReading.readDataToEndOfFile()
     p.waitUntilExit()
+    deadline.cancel()
+    lock.lock(); let didExpire = expired; lock.unlock()
+    if didExpire { throw ProbeError("Owned diagnostic child \(label) timed out after \(seconds)s; see timeout screenshot. No security approval was bypassed.") }
     return CommandResult(status: p.terminationStatus, output: String(decoding: data, as: UTF8.self))
 }
 
@@ -179,6 +203,9 @@ final class DockProbe: NSObject, NSApplicationDelegate {
     var fixtureWindow: NSWindow?
     var socket: URLSessionWebSocketTask?
     var commandID = 0
+    var staticLaunchCount = 0
+    var launchConfiguration: NSWorkspace.OpenConfiguration?
+    var staticWhite: Bool { actualAside && ProcessInfo.processInfo.environment["ASIDE_PROBE_STATIC_WHITE"] == "1" }
     var usesAuthenticatedBridge: Bool { actualAside && ProcessInfo.processInfo.environment["ASIDE_PROBE_AUTH_BRIDGE"] == "1" }
     var usesCDP: Bool { usesAuthenticatedBridge || (actualAside && ProcessInfo.processInfo.environment["ASIDE_PROBE_CDP_ONLY"] == "1") }
 
@@ -190,6 +217,7 @@ final class DockProbe: NSObject, NSApplicationDelegate {
         NSApp.setActivationPolicy(.accessory)
         do {
             try fm.createDirectory(at: output, withIntermediateDirectories: true)
+            probeOutputDirectory = output
             originalMetadata = try Metadata(target)
             originalManifest = try contentsManifest(target)
             try writeJSON(originalManifest, output.appendingPathComponent("contents-before.json"))
@@ -200,6 +228,14 @@ final class DockProbe: NSObject, NSApplicationDelegate {
             try writeJSON(policy, output.appendingPathComponent("gatekeeper-baseline.json"))
             if actualAside && policy.status != 0 {
                 throw ProbeError("Official Aside baseline Gatekeeper assessment was not accepted; experiment is inconclusive: \(policy.output)")
+            }
+            if staticWhite {
+                guard let image = NSImage(contentsOf: assets.appendingPathComponent("white.png")),
+                      NSWorkspace.shared.setIcon(image, forFile: target.path, options: []) else {
+                    throw ProbeError("Could not apply white Finder icon before launch")
+                }
+                NSWorkspace.shared.noteFileSystemChanged(target.path)
+                guard LSRegisterURL(target as CFURL, true) == noErr else { throw ProbeError("Launch Services registration failed") }
             }
             let config = NSWorkspace.OpenConfiguration()
             config.activates = true
@@ -216,6 +252,12 @@ final class DockProbe: NSObject, NSApplicationDelegate {
                     if usesCDP { config.arguments += ["--remote-debugging-port=0", "--remote-debugging-address=127.0.0.1"] }
                 }
             } else { config.arguments = ["--fixture-window"] }
+            launchConfiguration = config
+            launch(config)
+        } catch { fail(error) }
+    }
+
+    func launch(_ config: NSWorkspace.OpenConfiguration) {
             NSWorkspace.shared.openApplication(at: target, configuration: config) { [weak self] application, error in
                 DispatchQueue.main.async {
                     guard let self = self else { return }
@@ -226,7 +268,6 @@ final class DockProbe: NSObject, NSApplicationDelegate {
                     self.waitForLaunch()
                 }
             }
-        } catch { fail(error) }
     }
 
     func waitForLaunch() {
@@ -237,6 +278,13 @@ final class DockProbe: NSObject, NSApplicationDelegate {
             if app.isFinishedLaunching {
                 timer.invalidate()
                 self.schedule(2) {
+                    if self.staticWhite {
+                        self.runPhase("0\(self.staticLaunchCount)-white-applied-before-launch") {
+                            if self.staticLaunchCount == 0 { self.relaunchStaticProbe() }
+                            else { self.refreshDockIfRequested(phase: "02-white-after-second-launch-dock-refreshed") { self.finish() } }
+                        }
+                        return
+                    }
                     self.runPhase("00-original") {
                         if self.usesCDP { self.connectDebugger() }
                         else { self.apply("black", phase: "01-black-natural") }
@@ -245,6 +293,20 @@ final class DockProbe: NSObject, NSApplicationDelegate {
             } else if Date() > deadline {
                 timer.invalidate(); self.fail(ProbeError("Application launch did not complete"))
             }
+        }
+    }
+
+    func relaunchStaticProbe() {
+        guard let previous = app, let config = launchConfiguration else { fail(ProbeError("Missing owned probe app")); return }
+        guard previous.terminate() else { fail(ProbeError("Owned clean-profile Aside refused to quit")); return }
+        let deadline = Date().addingTimeInterval(30)
+        timer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] timer in
+            guard let self = self else { timer.invalidate(); return }
+            if previous.isTerminated {
+                timer.invalidate()
+                self.staticLaunchCount += 1
+                self.launch(config)
+            } else if Date() > deadline { timer.invalidate(); self.fail(ProbeError("Owned Aside did not finish quitting")) }
         }
     }
 

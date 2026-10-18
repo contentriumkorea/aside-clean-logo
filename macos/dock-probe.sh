@@ -67,7 +67,7 @@ codesign --verify --deep --strict "$ASIDE"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$ASIDE" > "$OUTPUT/launchservices-register.txt" 2>&1
 
 AUTH_NATIVE=""
-if [[ "${ASIDE_PROBE_AUTH_BRIDGE:-1}" == "1" ]]; then
+if [[ "${ASIDE_PROBE_AUTH_BRIDGE:-1}" == "1" && "${ASIDE_PROBE_STATIC_WHITE:-0}" != "1" ]]; then
   npm install --prefix "$WORK/cdp-client" --registry https://registry.npmjs.org --no-audit --no-fund --ignore-scripts --package-lock=false ws@8.18.3
   while IFS= read -r CANDIDATE; do
     if node -e 'const binding=require(process.argv[1]); if(typeof binding.run!=="function") process.exit(1)' "$CANDIDATE" >/dev/null 2>"$WORK/native-load-error.txt"; then
@@ -104,7 +104,9 @@ pin_app "$FIXTURE"
 /usr/bin/killall Dock
 
 RESULT=0
-if ASIDE_DOCK_PROBE_REFRESH=1 "$WORK/dock-probe" "$FIXTURE" "$ROOT/assets" "$OUTPUT/fixture" fixture; then
+if [[ "${ASIDE_PROBE_STATIC_WHITE:-0}" == "1" ]]; then
+  export ASIDE_PROBE_AUTH_BRIDGE=0 ASIDE_PROBE_CDP_ONLY=0
+elif ASIDE_DOCK_PROBE_REFRESH=1 "$WORK/dock-probe" "$FIXTURE" "$ROOT/assets" "$OUTPUT/fixture" fixture; then
   echo 'Fixture diagnostic commands completed. Review screenshots to decide actual Dock behavior.'
 else
   echo 'Fixture diagnostic failed; keep the report and continue to the independent Aside probe.' >&2

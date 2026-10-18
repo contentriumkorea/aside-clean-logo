@@ -1,0 +1,23 @@
+name: Verify static white Mac Dock icon
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: macos-14
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - name: Apply Finder white icon before two ordinary Aside launches
+        env:
+          ASIDE_PROBE_STATIC_WHITE: '1'
+          ASIDE_PROBE_AUTH_BRIDGE: '0'
+          ASIDE_PROBE_CDP_ONLY: '0'
+        run: bash macos/dock-probe.sh dist/static-white-probe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: static-white-dock-evidence
+          path: dist/static-white-probe
+          if-no-files-found: warn
